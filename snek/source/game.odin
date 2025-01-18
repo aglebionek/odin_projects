@@ -10,18 +10,18 @@ import rl "vendor:raylib"
 // --- GLOBAL ---
 // CONSTANTS
 GRID_ELEMENT_SIZE :: 16
-NUMBER_OF_GRID_ELEMENTS :: 20
+NUMBER_OF_GRID_ELEMENTS :: 16
 CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENTS
 MOVE_SNAKE_EVERY_N_SECONDS :: .5
 // TYPES
 V2i :: [2]u8 // Vector2 integer, for grid positions
-Snake_Direction :: enum u8 {
+Cat_Direction :: enum u8 {
 	UP,
 	DOWN,
 	LEFT,
 	RIGHT,
 }
-Snake_Textures :: struct {
+Cat_Textures :: struct {
 	left:      rl.Texture,
 	left_pop:  rl.Texture,
 	right:     rl.Texture,
@@ -36,16 +36,17 @@ Star_Textures :: struct {
 	star2: rl.Texture,
 }
 Game_Memory :: struct {
-	snake_texture:        rl.Texture,
-	snake_pos:            rl.Vector2,
-	time_since_last_move: f32,
-	snake_direction:      Snake_Direction,
-	start_exists:         bool,
+	cat_texture:          rl.Texture,
+	cat_pos:              rl.Vector2,
 	star_pos:             rl.Vector2,
+	time_since_last_move: f32,
+	cat_direction:        Cat_Direction,
+	star_exists:          bool,
+	star_textures_index:  i8,
 }
 // VARIABLES & POINTERS
 G_MEM: ^Game_Memory
-SNAKE_TEXTURES: ^Snake_Textures
+CAT_TEXTURES: ^Cat_Textures
 STAR_TEXTURES: ^Star_Textures
 game_camera :: proc() -> rl.Camera2D {
 	w := f32(rl.GetScreenWidth())
@@ -58,7 +59,6 @@ game_camera :: proc() -> rl.Camera2D {
 	offset_top := (h - CANVAS_SIZE * zoom) / 2
 
 	return {target = rl.Vector2{0, 0}, offset = rl.Vector2{offset_left, offset_top}, zoom = zoom}
-
 }
 
 // --- CORE EDITABLE PROCEDURES ---
@@ -72,10 +72,10 @@ game_init_window :: proc() {
 @(export)
 game_init :: proc() {
 	G_MEM = new(Game_Memory)
-	SNAKE_TEXTURES = new(Snake_Textures)
+	CAT_TEXTURES = new(Cat_Textures)
 	STAR_TEXTURES = new(Star_Textures)
 
-	SNAKE_TEXTURES^ = Snake_Textures {
+	CAT_TEXTURES^ = Cat_Textures {
 		left      = rl.LoadTexture("assets/kot_left.png"),
 		left_pop  = rl.LoadTexture("assets/kot_left_open.png"),
 		right     = rl.LoadTexture("assets/kot_right.png"),
@@ -92,11 +92,12 @@ game_init :: proc() {
 	}
 
 	G_MEM^ = Game_Memory {
-		snake_texture   = SNAKE_TEXTURES.right,
-		snake_pos       = rl.Vector2{0, 0},
-		snake_direction = Snake_Direction.RIGHT,
-		start_exists    = false,
-		star_pos        = get_random_pos(),
+		cat_texture         = CAT_TEXTURES.right,
+		cat_pos             = rl.Vector2{0, 0},
+		cat_direction       = Cat_Direction.RIGHT,
+		star_exists         = false,
+		star_pos            = get_random_pos(),
+		star_textures_index = 1,
 	}
 
 	game_hot_reloaded(G_MEM)
@@ -106,9 +107,9 @@ draw :: proc() {
 	rl.BeginDrawing()
 	rl.ClearBackground(rl.Color{30, 30, 30, 255})
 
-	snake_head := rl.Rectangle {
-		f32(G_MEM.snake_pos[0]),
-		f32(G_MEM.snake_pos[1]),
+	cat_head := rl.Rectangle {
+		f32(G_MEM.cat_pos[0]),
+		f32(G_MEM.cat_pos[1]),
 		GRID_ELEMENT_SIZE,
 		GRID_ELEMENT_SIZE,
 	}
@@ -116,7 +117,7 @@ draw :: proc() {
 
 	rl.BeginMode2D(camera)
 
-	rl.DrawTextureEx(G_MEM.snake_texture, rl.Vector2{snake_head.x, snake_head.y}, 0, .9, rl.WHITE)
+	rl.DrawTextureEx(G_MEM.cat_texture, rl.Vector2{cat_head.x, cat_head.y}, 0, .9, rl.WHITE)
 
 	draw_star()
 
@@ -129,51 +130,71 @@ update :: proc() {
 	G_MEM.time_since_last_move += rl.GetFrameTime()
 
 	if rl.IsKeyPressed(.UP) || rl.IsKeyPressed(.W) {
-		G_MEM.snake_direction = Snake_Direction.UP
-		G_MEM.snake_texture = SNAKE_TEXTURES.up
+		G_MEM.cat_direction = Cat_Direction.UP
 	}
 	if rl.IsKeyPressed(.DOWN) || rl.IsKeyPressed(.S) {
-		G_MEM.snake_direction = Snake_Direction.DOWN
-		G_MEM.snake_texture = SNAKE_TEXTURES.down
+		G_MEM.cat_direction = Cat_Direction.DOWN
 	}
 	if rl.IsKeyPressed(.LEFT) || rl.IsKeyPressed(.A) {
-		G_MEM.snake_direction = Snake_Direction.LEFT
-		G_MEM.snake_texture = SNAKE_TEXTURES.left
+		G_MEM.cat_direction = Cat_Direction.LEFT
 	}
 	if rl.IsKeyPressed(.RIGHT) || rl.IsKeyPressed(.D) {
-		G_MEM.snake_direction = Snake_Direction.RIGHT
-		G_MEM.snake_texture = SNAKE_TEXTURES.right
+		G_MEM.cat_direction = Cat_Direction.RIGHT
 	}
 
-	if should_snake_move() {
-		if G_MEM.snake_direction == Snake_Direction.UP {
-			G_MEM.snake_pos[1] -= GRID_ELEMENT_SIZE
-		} else if G_MEM.snake_direction == Snake_Direction.DOWN {
-			G_MEM.snake_pos[1] += GRID_ELEMENT_SIZE
-		} else if G_MEM.snake_direction == Snake_Direction.LEFT {
-			G_MEM.snake_pos[0] -= GRID_ELEMENT_SIZE
-		} else if G_MEM.snake_direction == Snake_Direction.RIGHT {
-			G_MEM.snake_pos[0] += GRID_ELEMENT_SIZE
+	if !should_update_state() {return}
+	
+	if G_MEM.cat_direction == Cat_Direction.UP {
+		G_MEM.cat_pos[1] -= GRID_ELEMENT_SIZE
+		G_MEM.cat_texture = is_snake_head_next_to_star() ? CAT_TEXTURES.up_pop : CAT_TEXTURES.up
+	} else if G_MEM.cat_direction == Cat_Direction.DOWN {
+		G_MEM.cat_pos[1] += GRID_ELEMENT_SIZE
+		G_MEM.cat_texture =
+			is_snake_head_next_to_star() ? CAT_TEXTURES.down_pop : CAT_TEXTURES.down
+	} else if G_MEM.cat_direction == Cat_Direction.LEFT {
+		G_MEM.cat_pos[0] -= GRID_ELEMENT_SIZE
+		G_MEM.cat_texture =
+			is_snake_head_next_to_star() ? CAT_TEXTURES.left_pop : CAT_TEXTURES.left
+	} else if G_MEM.cat_direction == Cat_Direction.RIGHT {
+		G_MEM.cat_pos[0] += GRID_ELEMENT_SIZE
+		G_MEM.cat_texture =
+			is_snake_head_next_to_star() ? CAT_TEXTURES.right_pop : CAT_TEXTURES.right
+	}
+
+	G_MEM.time_since_last_move = 0
+	G_MEM.star_textures_index *= -1
+
+	// if snake eats the star
+	if G_MEM.cat_pos.x == G_MEM.star_pos.x && G_MEM.cat_pos.y == G_MEM.star_pos.y {
+		G_MEM.star_exists = false // star will be redrawn in update:draw_star()
+		if G_MEM.cat_direction == Cat_Direction.UP {
+			G_MEM.cat_texture = CAT_TEXTURES.up
+		} else if G_MEM.cat_direction == Cat_Direction.DOWN {
+			G_MEM.cat_texture = CAT_TEXTURES.down
+		} else if G_MEM.cat_direction == Cat_Direction.LEFT {
+			G_MEM.cat_texture = CAT_TEXTURES.left
+		} else if G_MEM.cat_direction == Cat_Direction.RIGHT {
+			G_MEM.cat_texture = CAT_TEXTURES.right
 		}
-
-		G_MEM.time_since_last_move = 0
 	}
+
 }
 
 // --- CUSTOM USER PROCEDURES ---
 
-should_snake_move :: proc() -> bool {
+// since it's a snake game, the update of game state is done every N seconds
+should_update_state :: proc() -> bool {
 	return G_MEM.time_since_last_move >= MOVE_SNAKE_EVERY_N_SECONDS
 }
 
 draw_snake :: proc() {
 	snake_head := rl.Rectangle {
-		f32(G_MEM.snake_pos[0]),
-		f32(G_MEM.snake_pos[1]),
+		f32(G_MEM.cat_pos[0]),
+		f32(G_MEM.cat_pos[1]),
 		GRID_ELEMENT_SIZE,
 		GRID_ELEMENT_SIZE,
 	}
-	rl.DrawTextureEx(G_MEM.snake_texture, rl.Vector2{snake_head.x, snake_head.y}, 0, .9, rl.WHITE)
+	rl.DrawTextureEx(G_MEM.cat_texture, rl.Vector2{snake_head.x, snake_head.y}, 0, .9, rl.WHITE)
 }
 
 draw_grid :: proc() {
@@ -187,18 +208,24 @@ draw_grid :: proc() {
 	}
 }
 
-// apple
+// star
 draw_star :: proc() {
-	apple_pos := G_MEM.star_pos
+	star_pos := G_MEM.star_pos
 
-	if !G_MEM.start_exists {
+	if !G_MEM.star_exists {
 		random_pos := get_random_pos()
-		apple_pos.x = random_pos.x
-		apple_pos.y = random_pos.y
-		G_MEM.start_exists = true
+		star_pos.x = random_pos.x
+		star_pos.y = random_pos.y
+		G_MEM.star_exists = true
+		G_MEM.star_pos = star_pos
 	}
 
-	rl.DrawTextureEx(STAR_TEXTURES.star1, rl.Vector2{apple_pos.x, apple_pos.y}, 0, .9, rl.WHITE)
+	star_texture := STAR_TEXTURES.star1
+	if G_MEM.star_textures_index == 1 {
+		star_texture = STAR_TEXTURES.star2
+	}
+
+	rl.DrawTextureEx(star_texture, rl.Vector2{star_pos.x, star_pos.y}, 0, .9, rl.WHITE)
 }
 
 get_random_pos :: proc() -> rl.Vector2 {
@@ -206,6 +233,25 @@ get_random_pos :: proc() -> rl.Vector2 {
 		f32(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENTS - 1) * GRID_ELEMENT_SIZE),
 		f32(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENTS - 1) * GRID_ELEMENT_SIZE),
 	}
+}
+
+world_to_grid :: proc(world_pos: rl.Vector2) -> V2i {
+	return [2]u8{u8(world_pos.x / GRID_ELEMENT_SIZE), u8(world_pos.y / GRID_ELEMENT_SIZE)}
+}
+
+is_snake_head_next_to_star :: proc() -> bool {
+	snake_head := world_to_grid(G_MEM.cat_pos)
+	star_pos := world_to_grid(G_MEM.star_pos)
+
+	for x in -1 ..< 2 {
+		for y in -1 ..< 2 {
+			if snake_head[0] + u8(x) == star_pos[0] && snake_head[1] + u8(y) == star_pos[1] {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 
@@ -220,7 +266,7 @@ game_update :: proc() -> bool {
 @(export)
 game_shutdown :: proc() {
 	free(G_MEM)
-	free(SNAKE_TEXTURES)
+	free(CAT_TEXTURES)
 	free(STAR_TEXTURES)
 }
 
