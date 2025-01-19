@@ -1,34 +1,40 @@
 // Code ideas:
-// put textures in an array, and then calculate the index by doing some math operation with snake_direction and is_open
-// use grid coordinates and then convert them to screen coordinates
+// use grid coordinates and then convert them to screen coordinates?
+
+// TODOs and issues
+// Cat can't eat itself
+// Cat doesn't die when it hits the wall
+// Stars can spawn on the cat
+// If a star spawns next to the cat's head, it will have the wrong texture
+// If cat eats a star, and a new star spawns next to cat's head, it will have the wrong texture
 
 package game
 
-// import "core:fmt"
+import "core:fmt"
 import rl "vendor:raylib"
 
 // --- GLOBAL ---
 // CONSTANTS
 GRID_ELEMENT_SIZE :: 16
-NUMBER_OF_GRID_ELEMENTS :: 16
+NUMBER_OF_GRID_ELEMENTS :: 8
 CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENTS
 MOVE_SNAKE_EVERY_N_SECONDS :: .5
 // TYPES
-V2i :: [2]u8 // Vector2 integer, for grid positions
+V2u8 :: [2]u8 // Vector2 integer, for grid positions
 Cat_Direction :: enum u8 {
-	UP,
-	DOWN,
 	LEFT,
 	RIGHT,
+	UP,
+	DOWN,
 }
 Cat_Textures :: struct {
 	left:      rl.Texture,
-	left_pop:  rl.Texture,
 	right:     rl.Texture,
-	right_pop: rl.Texture,
 	up:        rl.Texture,
-	up_pop:    rl.Texture,
 	down:      rl.Texture,
+	left_pop:  rl.Texture,
+	right_pop: rl.Texture,
+	up_pop:    rl.Texture,
 	down_pop:  rl.Texture,
 }
 Star_Textures :: struct {
@@ -36,17 +42,21 @@ Star_Textures :: struct {
 	star2: rl.Texture,
 }
 Game_Memory :: struct {
-	cat_texture:          rl.Texture,
-	cat_pos:              rl.Vector2,
-	star_pos:             rl.Vector2,
-	time_since_last_move: f32,
-	cat_direction:        Cat_Direction,
-	star_exists:          bool,
-	star_textures_index:  i8,
+	cat_texture:           ^rl.Texture,
+	cat_head_pos:          rl.Vector2,
+	cat_body_positions:    [CANVAS_SIZE]rl.Vector2, // the last element is the tail
+	star_pos:              rl.Vector2,
+	time_since_last_move:  f32,
+	cat_direction:         Cat_Direction,
+	pending_cat_direction: Cat_Direction,
+	star_exists:           bool,
+	cat_tail_index:        u8,
+	star_textures_index:   i8,
 }
 // VARIABLES & POINTERS
 G_MEM: ^Game_Memory
 CAT_TEXTURES: ^Cat_Textures
+CAT_TEXTURES_INDEXABLE: [8]^rl.Texture
 STAR_TEXTURES: ^Star_Textures
 game_camera :: proc() -> rl.Camera2D {
 	w := f32(rl.GetScreenWidth())
@@ -77,13 +87,24 @@ game_init :: proc() {
 
 	CAT_TEXTURES^ = Cat_Textures {
 		left      = rl.LoadTexture("assets/kot_left.png"),
-		left_pop  = rl.LoadTexture("assets/kot_left_open.png"),
 		right     = rl.LoadTexture("assets/kot_right.png"),
-		right_pop = rl.LoadTexture("assets/kot_right_open.png"),
 		up        = rl.LoadTexture("assets/kot_back.png"),
-		up_pop    = rl.LoadTexture("assets/kot_back_open.png"),
 		down      = rl.LoadTexture("assets/kot_front.png"),
+		left_pop  = rl.LoadTexture("assets/kot_left_open.png"),
+		right_pop = rl.LoadTexture("assets/kot_right_open.png"),
+		up_pop    = rl.LoadTexture("assets/kot_back_open.png"),
 		down_pop  = rl.LoadTexture("assets/kot_front_open.png"),
+	}
+
+	CAT_TEXTURES_INDEXABLE = [8]^rl.Texture {
+		&CAT_TEXTURES.left,
+		&CAT_TEXTURES.right,
+		&CAT_TEXTURES.up,
+		&CAT_TEXTURES.down,
+		&CAT_TEXTURES.left_pop,
+		&CAT_TEXTURES.right_pop,
+		&CAT_TEXTURES.up_pop,
+		&CAT_TEXTURES.down_pop,
 	}
 
 	STAR_TEXTURES^ = Star_Textures {
@@ -92,32 +113,52 @@ game_init :: proc() {
 	}
 
 	G_MEM^ = Game_Memory {
-		cat_texture         = CAT_TEXTURES.right,
-		cat_pos             = rl.Vector2{0, 0},
-		cat_direction       = Cat_Direction.RIGHT,
-		star_exists         = false,
-		star_pos            = get_random_pos(),
-		star_textures_index = 1,
+		cat_direction         = Cat_Direction.RIGHT,
+		cat_head_pos          = rl.Vector2{0, 0},
+		cat_tail_index        = 0,
+		cat_texture           = &CAT_TEXTURES.right,
+		pending_cat_direction = Cat_Direction.RIGHT,
+		star_exists           = false,
+		star_pos              = get_random_pos(),
+		star_textures_index   = 1,
 	}
 
 	game_hot_reloaded(G_MEM)
+}
+
+@(export)
+game_shutdown :: proc() {
+	free(G_MEM)
+	free(CAT_TEXTURES)
+	free(STAR_TEXTURES)
 }
 
 draw :: proc() {
 	rl.BeginDrawing()
 	rl.ClearBackground(rl.Color{30, 30, 30, 255})
 
-	cat_head := rl.Rectangle {
-		f32(G_MEM.cat_pos[0]),
-		f32(G_MEM.cat_pos[1]),
-		GRID_ELEMENT_SIZE,
-		GRID_ELEMENT_SIZE,
-	}
 	camera := game_camera()
 
 	rl.BeginMode2D(camera)
 
-	rl.DrawTextureEx(G_MEM.cat_texture, rl.Vector2{cat_head.x, cat_head.y}, 0, .9, rl.WHITE)
+	// draw a cat for each body part
+	for i in 0 ..< G_MEM.cat_tail_index {
+		cat_body := rl.Rectangle {
+			f32(G_MEM.cat_body_positions[i].x),
+			f32(G_MEM.cat_body_positions[i].y),
+			GRID_ELEMENT_SIZE,
+			GRID_ELEMENT_SIZE,
+		}
+		rl.DrawTextureEx(CAT_TEXTURES.up, rl.Vector2{cat_body.x, cat_body.y}, 0, .9, rl.WHITE)
+	}
+
+	cat_head := rl.Rectangle {
+		f32(G_MEM.cat_head_pos[0]),
+		f32(G_MEM.cat_head_pos[1]),
+		GRID_ELEMENT_SIZE,
+		GRID_ELEMENT_SIZE,
+	}
+	rl.DrawTextureEx(G_MEM.cat_texture^, rl.Vector2{cat_head.x, cat_head.y}, 0, .9, rl.WHITE)
 
 	draw_star()
 
@@ -128,56 +169,42 @@ draw :: proc() {
 
 update :: proc() {
 	G_MEM.time_since_last_move += rl.GetFrameTime()
+	rl.DrawText(
+		fmt.ctprintf(
+			"player_pos: %v\nplayer_pos_grid: %v",
+			G_MEM.cat_head_pos,
+			world_to_grid(G_MEM.cat_head_pos),
+		),
+		5,
+		5,
+		8,
+		rl.WHITE,
+	)
 
-	if rl.IsKeyPressed(.UP) || rl.IsKeyPressed(.W) {
-		G_MEM.cat_direction = Cat_Direction.UP
-	}
-	if rl.IsKeyPressed(.DOWN) || rl.IsKeyPressed(.S) {
-		G_MEM.cat_direction = Cat_Direction.DOWN
-	}
-	if rl.IsKeyPressed(.LEFT) || rl.IsKeyPressed(.A) {
-		G_MEM.cat_direction = Cat_Direction.LEFT
-	}
-	if rl.IsKeyPressed(.RIGHT) || rl.IsKeyPressed(.D) {
-		G_MEM.cat_direction = Cat_Direction.RIGHT
-	}
+	determine_new_cat_direction()
 
 	if !should_update_state() {return}
-	
-	if G_MEM.cat_direction == Cat_Direction.UP {
-		G_MEM.cat_pos[1] -= GRID_ELEMENT_SIZE
-		G_MEM.cat_texture = is_snake_head_next_to_star() ? CAT_TEXTURES.up_pop : CAT_TEXTURES.up
-	} else if G_MEM.cat_direction == Cat_Direction.DOWN {
-		G_MEM.cat_pos[1] += GRID_ELEMENT_SIZE
-		G_MEM.cat_texture =
-			is_snake_head_next_to_star() ? CAT_TEXTURES.down_pop : CAT_TEXTURES.down
-	} else if G_MEM.cat_direction == Cat_Direction.LEFT {
-		G_MEM.cat_pos[0] -= GRID_ELEMENT_SIZE
-		G_MEM.cat_texture =
-			is_snake_head_next_to_star() ? CAT_TEXTURES.left_pop : CAT_TEXTURES.left
-	} else if G_MEM.cat_direction == Cat_Direction.RIGHT {
-		G_MEM.cat_pos[0] += GRID_ELEMENT_SIZE
-		G_MEM.cat_texture =
-			is_snake_head_next_to_star() ? CAT_TEXTURES.right_pop : CAT_TEXTURES.right
-	}
 
+	fmt.println(G_MEM.pending_cat_direction)
+	G_MEM.cat_direction = G_MEM.pending_cat_direction
+	G_MEM.cat_body_positions[G_MEM.cat_tail_index] = G_MEM.cat_head_pos
+
+	move_cat()
+
+	is_cat_pos_at_star_pos := is_cat_pos_exactly_at_star_pos()
 	G_MEM.time_since_last_move = 0
 	G_MEM.star_textures_index *= -1
 
-	// if snake eats the star
-	if G_MEM.cat_pos.x == G_MEM.star_pos.x && G_MEM.cat_pos.y == G_MEM.star_pos.y {
+	if is_cat_pos_at_star_pos {
 		G_MEM.star_exists = false // star will be redrawn in update:draw_star()
-		if G_MEM.cat_direction == Cat_Direction.UP {
-			G_MEM.cat_texture = CAT_TEXTURES.up
-		} else if G_MEM.cat_direction == Cat_Direction.DOWN {
-			G_MEM.cat_texture = CAT_TEXTURES.down
-		} else if G_MEM.cat_direction == Cat_Direction.LEFT {
-			G_MEM.cat_texture = CAT_TEXTURES.left
-		} else if G_MEM.cat_direction == Cat_Direction.RIGHT {
-			G_MEM.cat_texture = CAT_TEXTURES.right
+		G_MEM.cat_tail_index += 1
+	} else {
+		for i in 0 ..< G_MEM.cat_tail_index {
+			G_MEM.cat_body_positions[i] = G_MEM.cat_body_positions[i + 1]
 		}
 	}
 
+	G_MEM.cat_texture = determine_cat_texture(is_cat_pos_at_star_pos)
 }
 
 // --- CUSTOM USER PROCEDURES ---
@@ -187,14 +214,30 @@ should_update_state :: proc() -> bool {
 	return G_MEM.time_since_last_move >= MOVE_SNAKE_EVERY_N_SECONDS
 }
 
+move_cat :: proc() {
+	if G_MEM.cat_direction == Cat_Direction.UP {
+		G_MEM.cat_head_pos.y -= GRID_ELEMENT_SIZE
+	} else if G_MEM.cat_direction == Cat_Direction.DOWN {
+		G_MEM.cat_head_pos.y += GRID_ELEMENT_SIZE
+	} else if G_MEM.cat_direction == Cat_Direction.LEFT {
+		G_MEM.cat_head_pos.x -= GRID_ELEMENT_SIZE
+	} else if G_MEM.cat_direction == Cat_Direction.RIGHT {
+		G_MEM.cat_head_pos.x += GRID_ELEMENT_SIZE
+	}
+}
+
+is_cat_pos_exactly_at_star_pos :: proc() -> bool {
+	return G_MEM.cat_head_pos.x == G_MEM.star_pos.x && G_MEM.cat_head_pos.y == G_MEM.star_pos.y
+}
+
 draw_snake :: proc() {
 	snake_head := rl.Rectangle {
-		f32(G_MEM.cat_pos[0]),
-		f32(G_MEM.cat_pos[1]),
+		f32(G_MEM.cat_head_pos[0]),
+		f32(G_MEM.cat_head_pos[1]),
 		GRID_ELEMENT_SIZE,
 		GRID_ELEMENT_SIZE,
 	}
-	rl.DrawTextureEx(G_MEM.cat_texture, rl.Vector2{snake_head.x, snake_head.y}, 0, .9, rl.WHITE)
+	rl.DrawTextureEx(G_MEM.cat_texture^, rl.Vector2{snake_head.x, snake_head.y}, 0, .9, rl.WHITE)
 }
 
 draw_grid :: proc() {
@@ -206,6 +249,46 @@ draw_grid :: proc() {
 			rl.DrawRectangleLinesEx(grid_rect, .5, rl.RED)
 		}
 	}
+}
+
+// -- BEGIN: cat direction
+determine_new_cat_direction :: proc() {
+	new_cat_direction := G_MEM.pending_cat_direction
+	#partial switch rl.GetKeyPressed() {
+	case .UP, .W:
+		new_cat_direction = Cat_Direction.UP
+	case .DOWN, .S:
+		new_cat_direction = Cat_Direction.DOWN
+	case .LEFT, .A:
+		new_cat_direction = Cat_Direction.LEFT
+	case .RIGHT, .D:
+		new_cat_direction = Cat_Direction.RIGHT
+	}
+	if !is_new_direction_oposite_to_current(new_cat_direction) {
+		G_MEM.pending_cat_direction = new_cat_direction
+	}
+}
+
+is_new_direction_oposite_to_current :: proc(new_direction: Cat_Direction) -> bool {
+	switch G_MEM.cat_direction {
+	case Cat_Direction.UP:
+		return new_direction == Cat_Direction.DOWN
+	case Cat_Direction.DOWN:
+		return new_direction == Cat_Direction.UP
+	case Cat_Direction.LEFT:
+		return new_direction == Cat_Direction.RIGHT
+	case Cat_Direction.RIGHT:
+		return new_direction == Cat_Direction.LEFT
+	}
+	return false
+}
+// -- END: cat direction
+
+determine_cat_texture :: proc(is_cat_pos_at_star_pos: bool) -> ^rl.Texture {
+	cat_texture_index :=
+		u8(G_MEM.cat_direction) + u8(4) * u8(is_cat_head_next_to_star(is_cat_pos_at_star_pos))
+
+	return CAT_TEXTURES_INDEXABLE[cat_texture_index]
 }
 
 // star
@@ -220,12 +303,12 @@ draw_star :: proc() {
 		G_MEM.star_pos = star_pos
 	}
 
-	star_texture := STAR_TEXTURES.star1
+	star_texture := &STAR_TEXTURES.star1
 	if G_MEM.star_textures_index == 1 {
-		star_texture = STAR_TEXTURES.star2
+		star_texture = &STAR_TEXTURES.star2
 	}
 
-	rl.DrawTextureEx(star_texture, rl.Vector2{star_pos.x, star_pos.y}, 0, .9, rl.WHITE)
+	rl.DrawTextureEx(star_texture^, rl.Vector2{star_pos.x, star_pos.y}, 0, .9, rl.WHITE)
 }
 
 get_random_pos :: proc() -> rl.Vector2 {
@@ -235,20 +318,27 @@ get_random_pos :: proc() -> rl.Vector2 {
 	}
 }
 
-world_to_grid :: proc(world_pos: rl.Vector2) -> V2i {
+world_to_grid :: proc(world_pos: rl.Vector2) -> V2u8 {
 	return [2]u8{u8(world_pos.x / GRID_ELEMENT_SIZE), u8(world_pos.y / GRID_ELEMENT_SIZE)}
 }
 
-is_snake_head_next_to_star :: proc() -> bool {
-	snake_head := world_to_grid(G_MEM.cat_pos)
-	star_pos := world_to_grid(G_MEM.star_pos)
+is_cat_head_next_to_star :: proc(is_cat_pos_at_star_pos: bool) -> bool {
+	if is_cat_pos_at_star_pos {
+		return false
+	}
+	cat_grid_pos := world_to_grid(G_MEM.cat_head_pos)
+	star_grid_pos := world_to_grid(G_MEM.star_pos)
 
-	for x in -1 ..< 2 {
-		for y in -1 ..< 2 {
-			if snake_head[0] + u8(x) == star_pos[0] && snake_head[1] + u8(y) == star_pos[1] {
-				return true
-			}
-		}
+	// cast to i8 because of underflow issues
+	if cat_grid_pos.x == star_grid_pos.x {
+		y_diff := abs(i8(cat_grid_pos.y - star_grid_pos.y))
+		fmt.printfln("y_diff: %d", y_diff)
+		return y_diff == 1
+	}
+	if cat_grid_pos.y == star_grid_pos.y {
+		x_diff := abs(i8(cat_grid_pos.x - star_grid_pos.x))
+		fmt.printfln("x_diff: %d", x_diff)
+		return x_diff == 1
 	}
 
 	return false
@@ -261,13 +351,6 @@ game_update :: proc() -> bool {
 	update()
 	draw()
 	return !rl.WindowShouldClose()
-}
-
-@(export)
-game_shutdown :: proc() {
-	free(G_MEM)
-	free(CAT_TEXTURES)
-	free(STAR_TEXTURES)
 }
 
 @(export)
