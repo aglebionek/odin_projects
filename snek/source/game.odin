@@ -3,14 +3,14 @@
 
 // TODOs and issues
 // Cat can't eat itself
-// Cat doesn't die when it hits the wall
 // Stars can spawn on the cat
 // If a star spawns next to the cat's head, it will have the wrong texture
 // If cat eats a star, and a new star spawns next to cat's head, it will have the wrong texture
 
 package game
 
-import "core:fmt"
+// import "core:fmt"
+// import "core:prof/spall"
 import rl "vendor:raylib"
 
 // --- GLOBAL ---
@@ -49,6 +49,7 @@ Game_Memory :: struct {
 	time_since_last_move:  f32,
 	cat_direction:         Cat_Direction,
 	pending_cat_direction: Cat_Direction,
+	cat_alive:             bool,
 	star_exists:           bool,
 	cat_tail_index:        u8,
 	star_textures_index:   i8,
@@ -112,18 +113,23 @@ game_init :: proc() {
 		star2 = rl.LoadTexture("assets/star_02.png"),
 	}
 
+	set_initial_memory()
+
+	game_hot_reloaded(G_MEM)
+}
+
+set_initial_memory :: proc() {
 	G_MEM^ = Game_Memory {
 		cat_direction         = Cat_Direction.RIGHT,
 		cat_head_pos          = rl.Vector2{0, 0},
 		cat_tail_index        = 0,
+		cat_alive             = true,
 		cat_texture           = &CAT_TEXTURES.right,
 		pending_cat_direction = Cat_Direction.RIGHT,
 		star_exists           = false,
 		star_pos              = get_random_pos(),
 		star_textures_index   = 1,
 	}
-
-	game_hot_reloaded(G_MEM)
 }
 
 @(export)
@@ -140,6 +146,16 @@ draw :: proc() {
 	camera := game_camera()
 
 	rl.BeginMode2D(camera)
+
+	if !G_MEM.cat_alive {
+		rl.DrawText("Game Over", 20, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
+		rl.DrawText("Press Enter to restart", 10, CANVAS_SIZE / 2, 10, rl.WHITE)
+		rl.EndMode2D()
+		rl.EndDrawing()
+		return
+	}
+
+	draw_edges()
 
 	// draw a cat for each body part
 	for i in 0 ..< G_MEM.cat_tail_index {
@@ -168,28 +184,29 @@ draw :: proc() {
 }
 
 update :: proc() {
+	if !G_MEM.cat_alive {
+		if rl.IsKeyPressed(.ENTER) {
+			G_MEM.cat_alive = true
+			set_initial_memory()
+		}
+		return
+	}
 	G_MEM.time_since_last_move += rl.GetFrameTime()
-	rl.DrawText(
-		fmt.ctprintf(
-			"player_pos: %v\nplayer_pos_grid: %v",
-			G_MEM.cat_head_pos,
-			world_to_grid(G_MEM.cat_head_pos),
-		),
-		5,
-		5,
-		8,
-		rl.WHITE,
-	)
 
 	determine_new_cat_direction()
 
 	if !should_update_state() {return}
 
-	fmt.println(G_MEM.pending_cat_direction)
 	G_MEM.cat_direction = G_MEM.pending_cat_direction
 	G_MEM.cat_body_positions[G_MEM.cat_tail_index] = G_MEM.cat_head_pos
 
 	move_cat()
+
+	// check if the cat is outside the canvas
+	if is_cat_outside_canvas() {
+		G_MEM.cat_alive = false
+		return
+	}
 
 	is_cat_pos_at_star_pos := is_cat_pos_exactly_at_star_pos()
 	G_MEM.time_since_last_move = 0
@@ -226,6 +243,15 @@ move_cat :: proc() {
 	}
 }
 
+is_cat_outside_canvas :: proc() -> bool {
+	return(
+		G_MEM.cat_head_pos.x < 0 ||
+		G_MEM.cat_head_pos.x >= CANVAS_SIZE ||
+		G_MEM.cat_head_pos.y < 0 ||
+		G_MEM.cat_head_pos.y >= CANVAS_SIZE \
+	)
+}
+
 is_cat_pos_exactly_at_star_pos :: proc() -> bool {
 	return G_MEM.cat_head_pos.x == G_MEM.star_pos.x && G_MEM.cat_head_pos.y == G_MEM.star_pos.y
 }
@@ -238,6 +264,10 @@ draw_snake :: proc() {
 		GRID_ELEMENT_SIZE,
 	}
 	rl.DrawTextureEx(G_MEM.cat_texture^, rl.Vector2{snake_head.x, snake_head.y}, 0, .9, rl.WHITE)
+}
+
+draw_edges :: proc() {
+	rl.DrawRectangleLinesEx(rl.Rectangle{0, 0, CANVAS_SIZE, CANVAS_SIZE}, 1, rl.WHITE)
 }
 
 draw_grid :: proc() {
@@ -332,18 +362,15 @@ is_cat_head_next_to_star :: proc(is_cat_pos_at_star_pos: bool) -> bool {
 	// cast to i8 because of underflow issues
 	if cat_grid_pos.x == star_grid_pos.x {
 		y_diff := abs(i8(cat_grid_pos.y - star_grid_pos.y))
-		fmt.printfln("y_diff: %d", y_diff)
 		return y_diff == 1
 	}
 	if cat_grid_pos.y == star_grid_pos.y {
 		x_diff := abs(i8(cat_grid_pos.x - star_grid_pos.x))
-		fmt.printfln("x_diff: %d", x_diff)
 		return x_diff == 1
 	}
 
 	return false
 }
-
 
 // --- CORE UNEDITABLE PROCEDURES ---
 @(export)
