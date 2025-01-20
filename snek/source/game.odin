@@ -9,7 +9,7 @@
 
 package game
 
-// import "core:fmt"
+import "core:fmt"
 // import "core:prof/spall"
 import rl "vendor:raylib"
 
@@ -41,13 +41,16 @@ Star_Textures :: struct {
 	star1: rl.Texture,
 	star2: rl.Texture,
 }
+Cat_Segment :: struct {
+	pos:       rl.Vector2,
+	direction: Cat_Direction,
+}
 Game_Memory :: struct {
+	cat_segments:          [CANVAS_SIZE]Cat_Segment, // the last element is the tail
+	cat_head:              Cat_Segment,
 	cat_texture:           ^rl.Texture,
-	cat_head_pos:          rl.Vector2,
-	cat_body_positions:    [CANVAS_SIZE]rl.Vector2, // the last element is the tail
 	star_pos:              rl.Vector2,
 	time_since_last_move:  f32,
-	cat_direction:         Cat_Direction,
 	pending_cat_direction: Cat_Direction,
 	cat_alive:             bool,
 	star_exists:           bool,
@@ -116,12 +119,14 @@ game_init :: proc() {
 	set_initial_memory()
 
 	game_hot_reloaded(G_MEM)
+
+	fmt.printfln("Game memory size: %d", game_memory_size())
+	fmt.printfln("Textures size: %d", game_textures_size())
 }
 
 set_initial_memory :: proc() {
 	G_MEM^ = Game_Memory {
-		cat_direction         = Cat_Direction.RIGHT,
-		cat_head_pos          = rl.Vector2{0, 0},
+		cat_head              = Cat_Segment{rl.Vector2{0, 0}, Cat_Direction.RIGHT},
 		cat_tail_index        = 0,
 		cat_alive             = true,
 		cat_texture           = &CAT_TEXTURES.right,
@@ -148,8 +153,8 @@ draw :: proc() {
 	rl.BeginMode2D(camera)
 
 	if !G_MEM.cat_alive {
-		rl.DrawText("Game Over", 20, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
-		rl.DrawText("Press Enter to restart", 10, CANVAS_SIZE / 2, 10, rl.WHITE)
+		rl.DrawText("Game Over", 10, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
+		rl.DrawText("Press Enter to restart", 0, CANVAS_SIZE / 2, 10, rl.WHITE)
 		rl.EndMode2D()
 		rl.EndDrawing()
 		return
@@ -159,18 +164,25 @@ draw :: proc() {
 
 	// draw a cat for each body part
 	for i in 0 ..< G_MEM.cat_tail_index {
+		cat_segment := G_MEM.cat_segments[i]
 		cat_body := rl.Rectangle {
-			f32(G_MEM.cat_body_positions[i].x),
-			f32(G_MEM.cat_body_positions[i].y),
+			f32(cat_segment.pos.x),
+			f32(cat_segment.pos.y),
 			GRID_ELEMENT_SIZE,
 			GRID_ELEMENT_SIZE,
 		}
-		rl.DrawTextureEx(CAT_TEXTURES.up, rl.Vector2{cat_body.x, cat_body.y}, 0, .9, rl.WHITE)
+		rl.DrawTextureEx(
+			CAT_TEXTURES_INDEXABLE[u8(cat_segment.direction)]^,
+			rl.Vector2{cat_body.x, cat_body.y},
+			0,
+			.9,
+			rl.WHITE,
+		)
 	}
 
 	cat_head := rl.Rectangle {
-		f32(G_MEM.cat_head_pos[0]),
-		f32(G_MEM.cat_head_pos[1]),
+		f32(G_MEM.cat_head.pos[0]),
+		f32(G_MEM.cat_head.pos[1]),
 		GRID_ELEMENT_SIZE,
 		GRID_ELEMENT_SIZE,
 	}
@@ -197,8 +209,8 @@ update :: proc() {
 
 	if !should_update_state() {return}
 
-	G_MEM.cat_direction = G_MEM.pending_cat_direction
-	G_MEM.cat_body_positions[G_MEM.cat_tail_index] = G_MEM.cat_head_pos
+	G_MEM.cat_segments[G_MEM.cat_tail_index] = G_MEM.cat_head
+	G_MEM.cat_head.direction = G_MEM.pending_cat_direction
 
 	move_cat()
 
@@ -217,7 +229,7 @@ update :: proc() {
 		G_MEM.cat_tail_index += 1
 	} else {
 		for i in 0 ..< G_MEM.cat_tail_index {
-			G_MEM.cat_body_positions[i] = G_MEM.cat_body_positions[i + 1]
+			G_MEM.cat_segments[i] = G_MEM.cat_segments[i + 1]
 		}
 	}
 
@@ -232,34 +244,34 @@ should_update_state :: proc() -> bool {
 }
 
 move_cat :: proc() {
-	if G_MEM.cat_direction == Cat_Direction.UP {
-		G_MEM.cat_head_pos.y -= GRID_ELEMENT_SIZE
-	} else if G_MEM.cat_direction == Cat_Direction.DOWN {
-		G_MEM.cat_head_pos.y += GRID_ELEMENT_SIZE
-	} else if G_MEM.cat_direction == Cat_Direction.LEFT {
-		G_MEM.cat_head_pos.x -= GRID_ELEMENT_SIZE
-	} else if G_MEM.cat_direction == Cat_Direction.RIGHT {
-		G_MEM.cat_head_pos.x += GRID_ELEMENT_SIZE
+	if G_MEM.cat_head.direction == Cat_Direction.UP {
+		G_MEM.cat_head.pos.y -= GRID_ELEMENT_SIZE
+	} else if G_MEM.cat_head.direction == Cat_Direction.DOWN {
+		G_MEM.cat_head.pos.y += GRID_ELEMENT_SIZE
+	} else if G_MEM.cat_head.direction == Cat_Direction.LEFT {
+		G_MEM.cat_head.pos.x -= GRID_ELEMENT_SIZE
+	} else if G_MEM.cat_head.direction == Cat_Direction.RIGHT {
+		G_MEM.cat_head.pos.x += GRID_ELEMENT_SIZE
 	}
 }
 
 is_cat_outside_canvas :: proc() -> bool {
 	return(
-		G_MEM.cat_head_pos.x < 0 ||
-		G_MEM.cat_head_pos.x >= CANVAS_SIZE ||
-		G_MEM.cat_head_pos.y < 0 ||
-		G_MEM.cat_head_pos.y >= CANVAS_SIZE \
+		G_MEM.cat_head.pos.x < 0 ||
+		G_MEM.cat_head.pos.x >= CANVAS_SIZE ||
+		G_MEM.cat_head.pos.y < 0 ||
+		G_MEM.cat_head.pos.y >= CANVAS_SIZE \
 	)
 }
 
 is_cat_pos_exactly_at_star_pos :: proc() -> bool {
-	return G_MEM.cat_head_pos.x == G_MEM.star_pos.x && G_MEM.cat_head_pos.y == G_MEM.star_pos.y
+	return G_MEM.cat_head.pos.x == G_MEM.star_pos.x && G_MEM.cat_head.pos.y == G_MEM.star_pos.y
 }
 
 draw_snake :: proc() {
 	snake_head := rl.Rectangle {
-		f32(G_MEM.cat_head_pos[0]),
-		f32(G_MEM.cat_head_pos[1]),
+		f32(G_MEM.cat_head.pos[0]),
+		f32(G_MEM.cat_head.pos[1]),
 		GRID_ELEMENT_SIZE,
 		GRID_ELEMENT_SIZE,
 	}
@@ -300,7 +312,7 @@ determine_new_cat_direction :: proc() {
 }
 
 is_new_direction_oposite_to_current :: proc(new_direction: Cat_Direction) -> bool {
-	switch G_MEM.cat_direction {
+	switch G_MEM.cat_head.direction {
 	case Cat_Direction.UP:
 		return new_direction == Cat_Direction.DOWN
 	case Cat_Direction.DOWN:
@@ -316,7 +328,7 @@ is_new_direction_oposite_to_current :: proc(new_direction: Cat_Direction) -> boo
 
 determine_cat_texture :: proc(is_cat_pos_at_star_pos: bool) -> ^rl.Texture {
 	cat_texture_index :=
-		u8(G_MEM.cat_direction) + u8(4) * u8(is_cat_head_next_to_star(is_cat_pos_at_star_pos))
+		u8(G_MEM.cat_head.direction) + u8(4) * u8(is_cat_head_next_to_star(is_cat_pos_at_star_pos))
 
 	return CAT_TEXTURES_INDEXABLE[cat_texture_index]
 }
@@ -356,7 +368,7 @@ is_cat_head_next_to_star :: proc(is_cat_pos_at_star_pos: bool) -> bool {
 	if is_cat_pos_at_star_pos {
 		return false
 	}
-	cat_grid_pos := world_to_grid(G_MEM.cat_head_pos)
+	cat_grid_pos := world_to_grid(G_MEM.cat_head.pos)
 	star_grid_pos := world_to_grid(G_MEM.star_pos)
 
 	// cast to i8 because of underflow issues
@@ -393,6 +405,10 @@ game_memory :: proc() -> rawptr {
 @(export)
 game_memory_size :: proc() -> int {
 	return size_of(Game_Memory)
+}
+
+game_textures_size :: proc() -> int {
+	return size_of(Cat_Textures) + size_of(Star_Textures)
 }
 
 @(export)
