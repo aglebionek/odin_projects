@@ -6,7 +6,7 @@
 // Add a start game screen
 // Add sound effects
 // Add a death animation before game over screen, the death is kind of abrupt
-// Set the exe icon
+// Set the .exe icon
 // Stars can spawn on the cat
 // If a star spawns next to the cat's head, it will have the wrong texture
 // If cat eats a star, and a new star spawns next to cat's head, it will have the wrong texture
