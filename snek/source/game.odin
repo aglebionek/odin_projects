@@ -1,8 +1,11 @@
 // Code ideas:
-// use grid coordinates and then convert them to screen coordinates?
+// use grid coordinates and then convert them to screen coordinates for rendering? Would take up less memory, from [2]f32 to [2]u8 per position 
 // change G_MEM.cat_segments from AOS to SOA? Cat_Segment {pos_x: [1]f32, pos_y: [1]f32, direction: [1]Cat_Direction}
 
 // TODOs and issues
+// Add a start game screen
+// Add sound effects
+// Add a death animation before game over screen, the death is kind of abrupt
 // Set the exe icon
 // Stars can spawn on the cat
 // If a star spawns next to the cat's head, it will have the wrong texture
@@ -148,7 +151,6 @@ set_initial_memory :: proc() {
 	}
 }
 
-
 draw :: proc() {
 	rl.BeginDrawing()
 	rl.ClearBackground(rl.Color{30, 30, 30, 255})
@@ -159,7 +161,14 @@ draw :: proc() {
 
 	if !G_MEM.cat_alive {
 		rl.DrawText("Game Over", 10, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
-		rl.DrawText("Press Enter to restart", 0, CANVAS_SIZE / 2, 10, rl.WHITE)
+		rl.DrawText(
+			fmt.ctprintf("Score: %d", G_MEM.cat_tail_index),
+			40,
+			CANVAS_SIZE / 2,
+			10,
+			rl.WHITE,
+		)
+		rl.DrawText("Press Enter to restart", 0, CANVAS_SIZE / 2 + 20, 10, rl.WHITE)
 		rl.EndMode2D()
 		rl.EndDrawing()
 		return
