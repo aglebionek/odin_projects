@@ -43,7 +43,7 @@ Game_States :: enum u8 {
 Cat_Segment :: struct {
 	pos:       rl.Vector2,
 	direction: Cat_Direction,
-	dead:      bool,
+	texture:   ^rl.Texture,
 }
 Cat_Textures :: struct {
 	left:      rl.Texture,
@@ -63,7 +63,6 @@ Star_Textures :: struct {
 Game_Memory :: struct {
 	cat_segments:            [CANVAS_SIZE]Cat_Segment, // the last element is the tail
 	cat_head:                Cat_Segment,
-	cat_texture:             ^rl.Texture,
 	star_pos:                rl.Vector2,
 	time_since_last_move:    f32,
 	currently_dying_segment: int,
@@ -152,9 +151,8 @@ game_shutdown :: proc() {
 
 set_memory_to_initial_state :: proc() {
 	G_MEM^ = Game_Memory {
-		cat_head                = Cat_Segment{rl.Vector2{0, 0}, Cat_Direction.RIGHT, false},
+		cat_head                = Cat_Segment{rl.Vector2{0, 0}, Cat_Direction.RIGHT, &CAT_TEXTURES.right},
 		cat_tail_index          = 0,
-		cat_texture             = &CAT_TEXTURES.right,
 		currently_dying_segment = 0,
 		game_state              = .GAMEPLAY,
 		pending_cat_direction   = Cat_Direction.RIGHT,
@@ -172,10 +170,6 @@ draw :: proc() {
 
 	rl.BeginMode2D(camera)
 
-	if G_MEM.game_state == .DYING {
-		play_dead_animation()
-	}
-
 	if G_MEM.game_state == .SCORE_SCREEN {
 		rl.DrawText("Game Over", 10, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
 		rl.DrawText(
@@ -191,34 +185,26 @@ draw :: proc() {
 		return
 	}
 
+	if G_MEM.game_state == .DYING {
+		play_dead_animation()
+	}
+
 	draw_edges()
 
 	// draw a cat for each body part
 	for i in 0 ..< G_MEM.cat_tail_index {
 		cat_segment := G_MEM.cat_segments[i]
-		cat_body := rl.Rectangle {
-			f32(cat_segment.pos.x),
-			f32(cat_segment.pos.y),
-			GRID_ELEMENT_SIZE,
-			GRID_ELEMENT_SIZE,
-		}
 		rl.DrawTextureEx(
-			CAT_TEXTURES.dead if cat_segment.dead else CAT_TEXTURES_INDEXABLE[u8(cat_segment.direction)]^,
-			rl.Vector2{cat_body.x, cat_body.y},
+			cat_segment.texture^,
+			rl.Vector2{cat_segment.pos.x, cat_segment.pos.y},
 			0,
 			.9,
 			PURPLE,
 		)
 	}
 
-	// draw cat head
-	cat_head := rl.Rectangle {
-		f32(G_MEM.cat_head.pos[0]),
-		f32(G_MEM.cat_head.pos[1]),
-		GRID_ELEMENT_SIZE,
-		GRID_ELEMENT_SIZE,
-	}
-	rl.DrawTextureEx(G_MEM.cat_texture^, rl.Vector2{cat_head.x, cat_head.y}, 0, .9, rl.WHITE)
+	// draw the cat head
+	rl.DrawTextureEx(G_MEM.cat_head.texture^, rl.Vector2{G_MEM.cat_head.pos.x, G_MEM.cat_head.pos.y}, 0, .9, rl.WHITE)
 
 	draw_star()
 
@@ -273,7 +259,7 @@ update :: proc() {
 		return
 	}
 
-	G_MEM.cat_texture = determine_cat_texture(is_cat_pos_at_star_pos)
+	G_MEM.cat_head.texture = determine_cat_texture(is_cat_pos_at_star_pos)
 }
 
 // --- CUSTOM USER PROCEDURES ---
@@ -324,24 +310,14 @@ play_dead_animation :: proc() {
 		return
 	}
 
-	G_MEM.cat_segments[G_MEM.currently_dying_segment].dead = true
-	G_MEM.cat_texture = &CAT_TEXTURES.dead
+	G_MEM.cat_segments[G_MEM.currently_dying_segment].texture = &CAT_TEXTURES.dead
+	G_MEM.cat_head.texture = &CAT_TEXTURES.dead
 	G_MEM.currently_dying_segment -= 1
 	G_MEM.time_since_last_move = 0
 }
 
 is_cat_pos_exactly_at_star_pos :: proc() -> bool {
 	return G_MEM.cat_head.pos.x == G_MEM.star_pos.x && G_MEM.cat_head.pos.y == G_MEM.star_pos.y
-}
-
-draw_snake :: proc() {
-	snake_head := rl.Rectangle {
-		f32(G_MEM.cat_head.pos[0]),
-		f32(G_MEM.cat_head.pos[1]),
-		GRID_ELEMENT_SIZE,
-		GRID_ELEMENT_SIZE,
-	}
-	rl.DrawTextureEx(G_MEM.cat_texture^, rl.Vector2{snake_head.x, snake_head.y}, 0, .9, rl.WHITE)
 }
 
 draw_edges :: proc() {
@@ -428,6 +404,10 @@ get_random_pos :: proc() -> rl.Vector2 {
 
 world_to_grid :: proc(world_pos: rl.Vector2) -> V2u8 {
 	return [2]u8{u8(world_pos.x / GRID_ELEMENT_SIZE), u8(world_pos.y / GRID_ELEMENT_SIZE)}
+}
+
+grid_to_world :: proc(grid_pos: V2u8) -> rl.Vector2 {
+	return rl.Vector2{f32(grid_pos[0] * GRID_ELEMENT_SIZE), f32(grid_pos[1] * GRID_ELEMENT_SIZE)}
 }
 
 is_cat_head_inside_cat_body :: proc() -> bool {
