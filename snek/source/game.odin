@@ -1,11 +1,11 @@
 // Code ideas:
 // use grid coordinates and then convert them to screen coordinates for rendering? Would take up less memory, from [2]f32 to [2]u8 per position 
 // change G_MEM.cat_segments from AOS to SOA? Cat_Segment {pos_x: [1]f32, pos_y: [1]f32, direction: [1]Cat_Direction}
+// too many states to manage the death animation, simplify it
 
 // TODOs and issues
 // Add a start game screen
 // Add sound effects
-// Add a death animation before game over screen, the death is kind of abrupt
 // Set the .exe icon
 // Stars can spawn on the cat
 // If a star spawns next to the cat's head, it will have the wrong texture
@@ -22,8 +22,9 @@ import rl "vendor:raylib"
 GRID_ELEMENT_SIZE :: 16
 NUMBER_OF_GRID_ELEMENTS :: 8
 CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENTS
-MOVE_SNAKE_EVERY_N_SECONDS :: .5
+MOVE_SNAKE_EVERY_N_SECONDS :: .3
 PURPLE :: rl.Color{255, 0, 255, 200}
+DEATH_ANIMATION_TIME_IN_SECONDS :: f32(1.5)
 // TYPES
 V2u8 :: [2]u8 // Vector2 integer, for grid positions
 Cat_Direction :: enum u8 {
@@ -31,6 +32,11 @@ Cat_Direction :: enum u8 {
 	RIGHT,
 	UP,
 	DOWN,
+}
+Cat_Segment :: struct {
+	pos:       rl.Vector2,
+	direction: Cat_Direction,
+	dead:      bool,
 }
 Cat_Textures :: struct {
 	left:      rl.Texture,
@@ -41,26 +47,25 @@ Cat_Textures :: struct {
 	right_pop: rl.Texture,
 	up_pop:    rl.Texture,
 	down_pop:  rl.Texture,
+	dead:      rl.Texture,
 }
 Star_Textures :: struct {
 	star1: rl.Texture,
 	star2: rl.Texture,
 }
-Cat_Segment :: struct {
-	pos:       rl.Vector2,
-	direction: Cat_Direction,
-}
 Game_Memory :: struct {
-	cat_segments:          [CANVAS_SIZE]Cat_Segment, // the last element is the tail
-	cat_head:              Cat_Segment,
-	cat_texture:           ^rl.Texture,
-	star_pos:              rl.Vector2,
-	time_since_last_move:  f32,
-	pending_cat_direction: Cat_Direction,
-	cat_alive:             bool,
-	star_exists:           bool,
-	cat_tail_index:        u8,
-	star_textures_index:   i8,
+	cat_segments:            [CANVAS_SIZE]Cat_Segment, // the last element is the tail
+	cat_head:                Cat_Segment,
+	cat_texture:             ^rl.Texture,
+	star_pos:                rl.Vector2,
+	time_since_last_move:    f32,
+	currently_dying_segment: int,
+	cat_tail_index:          int,
+	pending_cat_direction:   Cat_Direction,
+	cat_alive:               bool,
+	star_exists:             bool,
+	playing_dead_animation:  bool,
+	star_textures_index:     i8,
 }
 // VARIABLES & POINTERS
 G_MEM: ^Game_Memory
@@ -105,6 +110,7 @@ game_init :: proc() {
 		right_pop = rl.LoadTexture("assets/kot_right_open.png"),
 		up_pop    = rl.LoadTexture("assets/kot_back_open.png"),
 		down_pop  = rl.LoadTexture("assets/kot_front_open.png"),
+		dead      = rl.LoadTexture("assets/kot_ded.png"),
 	}
 
 	CAT_TEXTURES_INDEXABLE = [8]^rl.Texture {
@@ -140,14 +146,16 @@ game_shutdown :: proc() {
 
 set_initial_memory :: proc() {
 	G_MEM^ = Game_Memory {
-		cat_head              = Cat_Segment{rl.Vector2{0, 0}, Cat_Direction.RIGHT},
-		cat_tail_index        = 0,
-		cat_alive             = true,
-		cat_texture           = &CAT_TEXTURES.right,
-		pending_cat_direction = Cat_Direction.RIGHT,
-		star_exists           = false,
-		star_pos              = get_random_pos(),
-		star_textures_index   = 1,
+		cat_head                = Cat_Segment{rl.Vector2{0, 0}, Cat_Direction.RIGHT, false},
+		cat_tail_index          = 0,
+		cat_alive               = true,
+		cat_texture             = &CAT_TEXTURES.right,
+		currently_dying_segment = 0,
+		pending_cat_direction   = Cat_Direction.RIGHT,
+		playing_dead_animation  = false,
+		star_exists             = false,
+		star_pos                = get_random_pos(),
+		star_textures_index     = 1,
 	}
 }
 
@@ -158,6 +166,10 @@ draw :: proc() {
 	camera := game_camera()
 
 	rl.BeginMode2D(camera)
+
+	if G_MEM.playing_dead_animation {
+		play_dead_animation()
+	}
 
 	if !G_MEM.cat_alive {
 		rl.DrawText("Game Over", 10, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
@@ -186,7 +198,7 @@ draw :: proc() {
 			GRID_ELEMENT_SIZE,
 		}
 		rl.DrawTextureEx(
-			CAT_TEXTURES_INDEXABLE[u8(cat_segment.direction)]^,
+			CAT_TEXTURES.dead if cat_segment.dead else CAT_TEXTURES_INDEXABLE[u8(cat_segment.direction)]^,
 			rl.Vector2{cat_body.x, cat_body.y},
 			0,
 			.9,
@@ -211,6 +223,10 @@ draw :: proc() {
 }
 
 update :: proc() {
+	G_MEM.time_since_last_move += rl.GetFrameTime()
+	if G_MEM.playing_dead_animation {
+		return
+	}
 	if !G_MEM.cat_alive {
 		if rl.IsKeyPressed(.ENTER) {
 			G_MEM.cat_alive = true
@@ -218,7 +234,6 @@ update :: proc() {
 		}
 		return
 	}
-	G_MEM.time_since_last_move += rl.GetFrameTime()
 
 	determine_new_cat_direction()
 
@@ -230,7 +245,9 @@ update :: proc() {
 	move_cat_head()
 
 	if is_cat_outside_canvas() {
-		G_MEM.cat_alive = false
+		move_cat_body()
+		G_MEM.playing_dead_animation = true
+		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
 		return
 	}
 
@@ -239,16 +256,15 @@ update :: proc() {
 	G_MEM.star_textures_index *= -1
 
 	if is_cat_pos_at_star_pos {
-		G_MEM.star_exists = false // star will be redrawn in update:draw_star()
+		G_MEM.star_exists = false 
 		G_MEM.cat_tail_index += 1
 	} else {
-		for i in 0 ..< G_MEM.cat_tail_index {
-			G_MEM.cat_segments[i] = G_MEM.cat_segments[i + 1]
-		}
+		move_cat_body()
 	}
 
 	if is_cat_head_inside_cat_body() {
-		G_MEM.cat_alive = false
+		G_MEM.playing_dead_animation = true
+		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
 		return
 	}
 
@@ -260,6 +276,12 @@ update :: proc() {
 // since it's a snake game, the update of game state is done every N seconds
 should_update_state :: proc() -> bool {
 	return G_MEM.time_since_last_move >= MOVE_SNAKE_EVERY_N_SECONDS
+}
+
+should_update_death_animation :: proc() -> bool {
+	time_to_die_for_segment :=
+		DEATH_ANIMATION_TIME_IN_SECONDS if G_MEM.cat_tail_index == 0 else DEATH_ANIMATION_TIME_IN_SECONDS / f32(G_MEM.cat_tail_index)
+	return G_MEM.time_since_last_move >= time_to_die_for_segment
 }
 
 move_cat_head :: proc() {
@@ -274,6 +296,12 @@ move_cat_head :: proc() {
 	}
 }
 
+move_cat_body :: proc() {
+	for i in 0 ..< G_MEM.cat_tail_index {
+		G_MEM.cat_segments[i] = G_MEM.cat_segments[i + 1]
+	}
+}
+
 is_cat_outside_canvas :: proc() -> bool {
 	return(
 		G_MEM.cat_head.pos.x < 0 ||
@@ -281,6 +309,20 @@ is_cat_outside_canvas :: proc() -> bool {
 		G_MEM.cat_head.pos.y < 0 ||
 		G_MEM.cat_head.pos.y >= CANVAS_SIZE \
 	)
+}
+
+play_dead_animation :: proc() {
+	if !should_update_death_animation() {return}
+	if G_MEM.currently_dying_segment == -1 {
+		G_MEM.cat_alive = false
+		G_MEM.playing_dead_animation = false
+		return
+	}
+
+	G_MEM.cat_segments[G_MEM.currently_dying_segment].dead = true
+	G_MEM.cat_texture = &CAT_TEXTURES.dead
+	G_MEM.currently_dying_segment -= 1
+	G_MEM.time_since_last_move = 0
 }
 
 is_cat_pos_exactly_at_star_pos :: proc() -> bool {
