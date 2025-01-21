@@ -1,8 +1,9 @@
 // Code ideas:
 // use grid coordinates and then convert them to screen coordinates?
+// change G_MEM.cat_segments from AOS to SOA? Cat_Segment {pos_x: [1]f32, pos_y: [1]f32, direction: [1]Cat_Direction}
 
 // TODOs and issues
-// Cat can't eat itself
+// Set the exe icon
 // Stars can spawn on the cat
 // If a star spawns next to the cat's head, it will have the wrong texture
 // If cat eats a star, and a new star spawns next to cat's head, it will have the wrong texture
@@ -19,6 +20,7 @@ GRID_ELEMENT_SIZE :: 16
 NUMBER_OF_GRID_ELEMENTS :: 8
 CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENTS
 MOVE_SNAKE_EVERY_N_SECONDS :: .5
+PURPLE :: rl.Color{255, 0, 255, 200}
 // TYPES
 V2u8 :: [2]u8 // Vector2 integer, for grid positions
 Cat_Direction :: enum u8 {
@@ -78,8 +80,10 @@ game_camera :: proc() -> rl.Camera2D {
 // --- CORE EDITABLE PROCEDURES ---
 @(export)
 game_init_window :: proc() {
+	icon: rl.Image = rl.LoadImage("assets/kot_front.png")
 	rl.SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT})
 	rl.InitWindow(800, 600, "Snek")
+	rl.SetWindowIcon(icon)
 	rl.MaximizeWindow()
 }
 
@@ -124,6 +128,13 @@ game_init :: proc() {
 	fmt.printfln("Textures size: %d", game_textures_size())
 }
 
+@(export)
+game_shutdown :: proc() {
+	free(G_MEM)
+	free(CAT_TEXTURES)
+	free(STAR_TEXTURES)
+}
+
 set_initial_memory :: proc() {
 	G_MEM^ = Game_Memory {
 		cat_head              = Cat_Segment{rl.Vector2{0, 0}, Cat_Direction.RIGHT},
@@ -137,12 +148,6 @@ set_initial_memory :: proc() {
 	}
 }
 
-@(export)
-game_shutdown :: proc() {
-	free(G_MEM)
-	free(CAT_TEXTURES)
-	free(STAR_TEXTURES)
-}
 
 draw :: proc() {
 	rl.BeginDrawing()
@@ -176,10 +181,11 @@ draw :: proc() {
 			rl.Vector2{cat_body.x, cat_body.y},
 			0,
 			.9,
-			rl.WHITE,
+			PURPLE,
 		)
 	}
 
+	// draw cat head
 	cat_head := rl.Rectangle {
 		f32(G_MEM.cat_head.pos[0]),
 		f32(G_MEM.cat_head.pos[1]),
@@ -212,9 +218,8 @@ update :: proc() {
 	G_MEM.cat_segments[G_MEM.cat_tail_index] = G_MEM.cat_head
 	G_MEM.cat_head.direction = G_MEM.pending_cat_direction
 
-	move_cat()
+	move_cat_head()
 
-	// check if the cat is outside the canvas
 	if is_cat_outside_canvas() {
 		G_MEM.cat_alive = false
 		return
@@ -233,6 +238,11 @@ update :: proc() {
 		}
 	}
 
+	if is_cat_head_inside_cat_body() {
+		G_MEM.cat_alive = false
+		return
+	}
+
 	G_MEM.cat_texture = determine_cat_texture(is_cat_pos_at_star_pos)
 }
 
@@ -243,7 +253,7 @@ should_update_state :: proc() -> bool {
 	return G_MEM.time_since_last_move >= MOVE_SNAKE_EVERY_N_SECONDS
 }
 
-move_cat :: proc() {
+move_cat_head :: proc() {
 	if G_MEM.cat_head.direction == Cat_Direction.UP {
 		G_MEM.cat_head.pos.y -= GRID_ELEMENT_SIZE
 	} else if G_MEM.cat_head.direction == Cat_Direction.DOWN {
@@ -279,7 +289,7 @@ draw_snake :: proc() {
 }
 
 draw_edges :: proc() {
-	rl.DrawRectangleLinesEx(rl.Rectangle{0, 0, CANVAS_SIZE, CANVAS_SIZE}, 1, rl.WHITE)
+	rl.DrawRectangleLinesEx(rl.Rectangle{0, 0, CANVAS_SIZE, CANVAS_SIZE}, 1, PURPLE)
 }
 
 draw_grid :: proc() {
@@ -362,6 +372,17 @@ get_random_pos :: proc() -> rl.Vector2 {
 
 world_to_grid :: proc(world_pos: rl.Vector2) -> V2u8 {
 	return [2]u8{u8(world_pos.x / GRID_ELEMENT_SIZE), u8(world_pos.y / GRID_ELEMENT_SIZE)}
+}
+
+is_cat_head_inside_cat_body :: proc() -> bool {
+	cat_head_pos := world_to_grid(G_MEM.cat_head.pos)
+	for i in 0 ..< G_MEM.cat_tail_index {
+		cat_segment_pos := world_to_grid(G_MEM.cat_segments[i].pos)
+		if cat_head_pos.x == cat_segment_pos.x && cat_head_pos.y == cat_segment_pos.y {
+			return true
+		}
+	}
+	return false
 }
 
 is_cat_head_next_to_star :: proc(is_cat_pos_at_star_pos: bool) -> bool {
