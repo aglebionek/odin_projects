@@ -1,5 +1,4 @@
 // Code ideas:
-// use grid coordinates and then convert them to screen coordinates for rendering? Would take up less memory, from [2]f32 to [2]u8 per position 
 // change G_MEM.cat_segments from AOS to SOA? Cat_Segment {pos_x: [1]f32, pos_y: [1]f32, direction: [1]Cat_Direction}
 
 // TODOs and issues
@@ -25,9 +24,9 @@ NUMBER_OF_GRID_ELEMENTS :: 8
 CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENTS
 MOVE_SNAKE_EVERY_N_SECONDS :: .3
 PURPLE :: rl.Color{255, 0, 255, 200}
-DEATH_ANIMATION_TIME_IN_SECONDS :: f32(1.5)
+DEATH_ANIMATION_TIME_IN_SECONDS :: f32(1.2)
 // TYPES
-V2u8 :: [2]u8 // Vector2 integer, for grid positions
+V2i8 :: [2]i8 // Vector2 integer, for grid positions
 Cat_Direction :: enum u8 {
 	LEFT,
 	RIGHT,
@@ -41,9 +40,9 @@ Game_States :: enum u8 {
 	SCORE_SCREEN,
 }
 Cat_Segment :: struct {
-	pos:       rl.Vector2,
-	direction: Cat_Direction,
-	texture:   ^rl.Texture,
+	pos:           V2i8,
+	direction:     Cat_Direction,
+	texture_index: u8,
 }
 Cat_Textures :: struct {
 	left:      rl.Texture,
@@ -63,10 +62,10 @@ Star_Textures :: struct {
 Game_Memory :: struct {
 	cat_segments:            [CANVAS_SIZE]Cat_Segment, // the last element is the tail
 	cat_head:                Cat_Segment,
-	star_pos:                rl.Vector2,
 	time_since_last_move:    f32,
 	currently_dying_segment: int,
 	cat_tail_index:          int,
+	star_pos:                V2i8,
 	pending_cat_direction:   Cat_Direction,
 	star_exists:             bool,
 	star_textures_index:     i8,
@@ -75,7 +74,7 @@ Game_Memory :: struct {
 // VARIABLES & POINTERS
 G_MEM: ^Game_Memory
 CAT_TEXTURES: ^Cat_Textures
-CAT_TEXTURES_INDEXABLE: [8]^rl.Texture
+CAT_TEXTURES_INDEXABLE: [9]^rl.Texture
 STAR_TEXTURES: ^Star_Textures
 game_camera :: proc() -> rl.Camera2D {
 	w := f32(rl.GetScreenWidth())
@@ -118,7 +117,7 @@ game_init :: proc() {
 		dead      = rl.LoadTexture("assets/kot_ded.png"),
 	}
 
-	CAT_TEXTURES_INDEXABLE = [8]^rl.Texture {
+	CAT_TEXTURES_INDEXABLE = [9]^rl.Texture {
 		&CAT_TEXTURES.left,
 		&CAT_TEXTURES.right,
 		&CAT_TEXTURES.up,
@@ -127,6 +126,7 @@ game_init :: proc() {
 		&CAT_TEXTURES.right_pop,
 		&CAT_TEXTURES.up_pop,
 		&CAT_TEXTURES.down_pop,
+		&CAT_TEXTURES.dead,
 	}
 
 	STAR_TEXTURES^ = Star_Textures {
@@ -151,7 +151,11 @@ game_shutdown :: proc() {
 
 set_memory_to_initial_state :: proc() {
 	G_MEM^ = Game_Memory {
-		cat_head                = Cat_Segment{rl.Vector2{0, 0}, Cat_Direction.RIGHT, &CAT_TEXTURES.right},
+		cat_head                = Cat_Segment {
+			V2i8{0, 0},
+			Cat_Direction.RIGHT,
+			0,
+		},
 		cat_tail_index          = 0,
 		currently_dying_segment = 0,
 		game_state              = .GAMEPLAY,
@@ -195,8 +199,8 @@ draw :: proc() {
 	for i in 0 ..< G_MEM.cat_tail_index {
 		cat_segment := G_MEM.cat_segments[i]
 		rl.DrawTextureEx(
-			cat_segment.texture^,
-			rl.Vector2{cat_segment.pos.x, cat_segment.pos.y},
+			CAT_TEXTURES_INDEXABLE[cat_segment.texture_index]^,
+			grid_to_world(cat_segment.pos),
 			0,
 			.9,
 			PURPLE,
@@ -204,7 +208,13 @@ draw :: proc() {
 	}
 
 	// draw the cat head
-	rl.DrawTextureEx(G_MEM.cat_head.texture^, rl.Vector2{G_MEM.cat_head.pos.x, G_MEM.cat_head.pos.y}, 0, .9, rl.WHITE)
+	rl.DrawTextureEx(
+		CAT_TEXTURES_INDEXABLE[G_MEM.cat_head.texture_index]^,
+		grid_to_world(G_MEM.cat_head.pos),
+		0,
+		.9,
+		rl.WHITE,
+	)
 
 	draw_star()
 
@@ -230,6 +240,7 @@ update :: proc() {
 
 	if !should_update_state() {return}
 
+	G_MEM.cat_head.texture_index %= 4
 	G_MEM.cat_segments[G_MEM.cat_tail_index] = G_MEM.cat_head
 	G_MEM.cat_head.direction = G_MEM.pending_cat_direction
 
@@ -238,6 +249,7 @@ update :: proc() {
 	if is_cat_outside_canvas() {
 		move_cat_body()
 		G_MEM.game_state = .DYING
+		G_MEM.time_since_last_move += DEATH_ANIMATION_TIME_IN_SECONDS
 		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
 		return
 	}
@@ -255,11 +267,12 @@ update :: proc() {
 
 	if is_cat_head_inside_cat_body() {
 		G_MEM.game_state = .DYING
+		G_MEM.time_since_last_move += DEATH_ANIMATION_TIME_IN_SECONDS
 		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
 		return
 	}
 
-	G_MEM.cat_head.texture = determine_cat_texture(is_cat_pos_at_star_pos)
+	G_MEM.cat_head.texture_index = determine_cat_texture(is_cat_pos_at_star_pos)
 }
 
 // --- CUSTOM USER PROCEDURES ---
@@ -278,13 +291,13 @@ should_update_death_animation :: proc() -> bool {
 move_cat_head :: proc() {
 	switch G_MEM.cat_head.direction {
 	case Cat_Direction.UP:
-		G_MEM.cat_head.pos.y -= GRID_ELEMENT_SIZE
+		G_MEM.cat_head.pos.y -= 1
 	case Cat_Direction.DOWN:
-		G_MEM.cat_head.pos.y += GRID_ELEMENT_SIZE
+		G_MEM.cat_head.pos.y += 1
 	case Cat_Direction.LEFT:
-		G_MEM.cat_head.pos.x -= GRID_ELEMENT_SIZE
+		G_MEM.cat_head.pos.x -= 1
 	case Cat_Direction.RIGHT:
-		G_MEM.cat_head.pos.x += GRID_ELEMENT_SIZE
+		G_MEM.cat_head.pos.x += 1
 	}
 }
 
@@ -294,15 +307,6 @@ move_cat_body :: proc() {
 	}
 }
 
-is_cat_outside_canvas :: proc() -> bool {
-	return(
-		G_MEM.cat_head.pos.x < 0 ||
-		G_MEM.cat_head.pos.x >= CANVAS_SIZE ||
-		G_MEM.cat_head.pos.y < 0 ||
-		G_MEM.cat_head.pos.y >= CANVAS_SIZE \
-	)
-}
-
 play_dead_animation :: proc() {
 	if !should_update_death_animation() {return}
 	if G_MEM.currently_dying_segment == -1 {
@@ -310,29 +314,15 @@ play_dead_animation :: proc() {
 		return
 	}
 
-	G_MEM.cat_segments[G_MEM.currently_dying_segment].texture = &CAT_TEXTURES.dead
-	G_MEM.cat_head.texture = &CAT_TEXTURES.dead
+	G_MEM.cat_segments[G_MEM.currently_dying_segment].texture_index = 8
+	G_MEM.cat_head.texture_index = 8
 	G_MEM.currently_dying_segment -= 1
 	G_MEM.time_since_last_move = 0
 }
 
-is_cat_pos_exactly_at_star_pos :: proc() -> bool {
-	return G_MEM.cat_head.pos.x == G_MEM.star_pos.x && G_MEM.cat_head.pos.y == G_MEM.star_pos.y
-}
 
 draw_edges :: proc() {
 	rl.DrawRectangleLinesEx(rl.Rectangle{0, 0, CANVAS_SIZE, CANVAS_SIZE}, 1, PURPLE)
-}
-
-draw_grid :: proc() {
-	grid_rect := rl.Rectangle{0, 0, GRID_ELEMENT_SIZE, GRID_ELEMENT_SIZE}
-	for x in 0 ..< NUMBER_OF_GRID_ELEMENTS {
-		for y in 0 ..< NUMBER_OF_GRID_ELEMENTS {
-			grid_rect.x = f32(x * GRID_ELEMENT_SIZE)
-			grid_rect.y = f32(y * GRID_ELEMENT_SIZE)
-			rl.DrawRectangleLinesEx(grid_rect, .5, rl.RED)
-		}
-	}
 }
 
 // -- BEGIN: cat direction
@@ -368,11 +358,11 @@ is_new_direction_oposite_to_current :: proc(new_direction: Cat_Direction) -> boo
 }
 // -- END: cat direction
 
-determine_cat_texture :: proc(is_cat_pos_at_star_pos: bool) -> ^rl.Texture {
+determine_cat_texture :: proc(is_cat_pos_at_star_pos: bool) -> u8 {
 	cat_texture_index :=
 		u8(G_MEM.cat_head.direction) + u8(4) * u8(is_cat_head_next_to_star(is_cat_pos_at_star_pos))
 
-	return CAT_TEXTURES_INDEXABLE[cat_texture_index]
+	return cat_texture_index
 }
 
 // star
@@ -392,28 +382,35 @@ draw_star :: proc() {
 		star_texture = &STAR_TEXTURES.star2
 	}
 
-	rl.DrawTextureEx(star_texture^, rl.Vector2{star_pos.x, star_pos.y}, 0, .9, rl.WHITE)
+	rl.DrawTextureEx(star_texture^, grid_to_world(star_pos), 0, .9, rl.WHITE)
 }
 
-get_random_pos :: proc() -> rl.Vector2 {
-	return rl.Vector2 {
-		f32(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENTS - 1) * GRID_ELEMENT_SIZE),
-		f32(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENTS - 1) * GRID_ELEMENT_SIZE),
+get_random_pos :: proc() -> V2i8 {
+	return V2i8 {
+		i8(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENTS - 1)),
+		i8(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENTS - 1)),
 	}
 }
 
-world_to_grid :: proc(world_pos: rl.Vector2) -> V2u8 {
-	return [2]u8{u8(world_pos.x / GRID_ELEMENT_SIZE), u8(world_pos.y / GRID_ELEMENT_SIZE)}
+// world_to_grid :: proc(world_pos: rl.Vector2) -> V2u8 {
+// 	return [2]i8{i8(world_pos.x / GRID_ELEMENT_SIZE), i8(world_pos.y / GRID_ELEMENT_SIZE)}
+// }
+
+grid_to_world :: proc(grid_pos: V2i8) -> rl.Vector2 {
+	return rl.Vector2 {
+		f32(int(grid_pos[0]) * GRID_ELEMENT_SIZE),
+		f32(int(grid_pos[1]) * GRID_ELEMENT_SIZE),
+	}
 }
 
-grid_to_world :: proc(grid_pos: V2u8) -> rl.Vector2 {
-	return rl.Vector2{f32(grid_pos[0] * GRID_ELEMENT_SIZE), f32(grid_pos[1] * GRID_ELEMENT_SIZE)}
+is_cat_pos_exactly_at_star_pos :: proc() -> bool {
+	return G_MEM.cat_head.pos.x == G_MEM.star_pos.x && G_MEM.cat_head.pos.y == G_MEM.star_pos.y
 }
 
 is_cat_head_inside_cat_body :: proc() -> bool {
-	cat_head_pos := world_to_grid(G_MEM.cat_head.pos)
+	cat_head_pos := G_MEM.cat_head.pos
 	for i in 0 ..< G_MEM.cat_tail_index {
-		cat_segment_pos := world_to_grid(G_MEM.cat_segments[i].pos)
+		cat_segment_pos := G_MEM.cat_segments[i].pos
 		if cat_head_pos.x == cat_segment_pos.x && cat_head_pos.y == cat_segment_pos.y {
 			return true
 		}
@@ -421,12 +418,22 @@ is_cat_head_inside_cat_body :: proc() -> bool {
 	return false
 }
 
+
+is_cat_outside_canvas :: proc() -> bool {
+	return(
+		G_MEM.cat_head.pos.x < 0 ||
+		G_MEM.cat_head.pos.x >= NUMBER_OF_GRID_ELEMENTS ||
+		G_MEM.cat_head.pos.y < 0 ||
+		G_MEM.cat_head.pos.y >= NUMBER_OF_GRID_ELEMENTS \
+	)
+}
+
 is_cat_head_next_to_star :: proc(is_cat_pos_at_star_pos: bool) -> bool {
 	if is_cat_pos_at_star_pos {
 		return false
 	}
-	cat_grid_pos := world_to_grid(G_MEM.cat_head.pos)
-	star_grid_pos := world_to_grid(G_MEM.star_pos)
+	cat_grid_pos := G_MEM.cat_head.pos
+	star_grid_pos := G_MEM.star_pos
 
 	// cast to i8 because of underflow issues
 	if cat_grid_pos.x == star_grid_pos.x {
