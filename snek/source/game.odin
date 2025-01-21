@@ -1,10 +1,11 @@
 // Code ideas:
 // use grid coordinates and then convert them to screen coordinates for rendering? Would take up less memory, from [2]f32 to [2]u8 per position 
 // change G_MEM.cat_segments from AOS to SOA? Cat_Segment {pos_x: [1]f32, pos_y: [1]f32, direction: [1]Cat_Direction}
-// too many states to manage the death animation, simplify it
 
 // TODOs and issues
+// Get spall working
 // Add a start game screen
+// resize the player space a bit, so we can see when cat goes out the grid
 // Add sound effects
 // Set the .exe icon
 // Stars can spawn on the cat
@@ -32,6 +33,12 @@ Cat_Direction :: enum u8 {
 	RIGHT,
 	UP,
 	DOWN,
+}
+Game_States :: enum u8 {
+	START_SCREEN,
+	GAMEPLAY,
+	DYING,
+	SCORE_SCREEN,
 }
 Cat_Segment :: struct {
 	pos:       rl.Vector2,
@@ -62,10 +69,9 @@ Game_Memory :: struct {
 	currently_dying_segment: int,
 	cat_tail_index:          int,
 	pending_cat_direction:   Cat_Direction,
-	cat_alive:               bool,
 	star_exists:             bool,
-	playing_dead_animation:  bool,
 	star_textures_index:     i8,
+	game_state:              Game_States,
 }
 // VARIABLES & POINTERS
 G_MEM: ^Game_Memory
@@ -129,7 +135,7 @@ game_init :: proc() {
 		star2 = rl.LoadTexture("assets/star_02.png"),
 	}
 
-	set_initial_memory()
+	set_memory_to_initial_state()
 
 	game_hot_reloaded(G_MEM)
 
@@ -144,15 +150,14 @@ game_shutdown :: proc() {
 	free(STAR_TEXTURES)
 }
 
-set_initial_memory :: proc() {
+set_memory_to_initial_state :: proc() {
 	G_MEM^ = Game_Memory {
 		cat_head                = Cat_Segment{rl.Vector2{0, 0}, Cat_Direction.RIGHT, false},
 		cat_tail_index          = 0,
-		cat_alive               = true,
 		cat_texture             = &CAT_TEXTURES.right,
 		currently_dying_segment = 0,
+		game_state              = .GAMEPLAY,
 		pending_cat_direction   = Cat_Direction.RIGHT,
-		playing_dead_animation  = false,
 		star_exists             = false,
 		star_pos                = get_random_pos(),
 		star_textures_index     = 1,
@@ -167,11 +172,11 @@ draw :: proc() {
 
 	rl.BeginMode2D(camera)
 
-	if G_MEM.playing_dead_animation {
+	if G_MEM.game_state == .DYING {
 		play_dead_animation()
 	}
 
-	if !G_MEM.cat_alive {
+	if G_MEM.game_state == .SCORE_SCREEN {
 		rl.DrawText("Game Over", 10, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
 		rl.DrawText(
 			fmt.ctprintf("Score: %d", G_MEM.cat_tail_index),
@@ -224,13 +229,13 @@ draw :: proc() {
 
 update :: proc() {
 	G_MEM.time_since_last_move += rl.GetFrameTime()
-	if G_MEM.playing_dead_animation {
+	if G_MEM.game_state == .DYING {
 		return
 	}
-	if !G_MEM.cat_alive {
+	if G_MEM.game_state == .SCORE_SCREEN {
 		if rl.IsKeyPressed(.ENTER) {
-			G_MEM.cat_alive = true
-			set_initial_memory()
+			G_MEM.game_state = .GAMEPLAY
+			set_memory_to_initial_state()
 		}
 		return
 	}
@@ -246,7 +251,7 @@ update :: proc() {
 
 	if is_cat_outside_canvas() {
 		move_cat_body()
-		G_MEM.playing_dead_animation = true
+		G_MEM.game_state = .DYING
 		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
 		return
 	}
@@ -256,14 +261,14 @@ update :: proc() {
 	G_MEM.star_textures_index *= -1
 
 	if is_cat_pos_at_star_pos {
-		G_MEM.star_exists = false 
+		G_MEM.star_exists = false
 		G_MEM.cat_tail_index += 1
 	} else {
 		move_cat_body()
 	}
 
 	if is_cat_head_inside_cat_body() {
-		G_MEM.playing_dead_animation = true
+		G_MEM.game_state = .DYING
 		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
 		return
 	}
@@ -285,13 +290,14 @@ should_update_death_animation :: proc() -> bool {
 }
 
 move_cat_head :: proc() {
-	if G_MEM.cat_head.direction == Cat_Direction.UP {
+	switch G_MEM.cat_head.direction {
+	case Cat_Direction.UP:
 		G_MEM.cat_head.pos.y -= GRID_ELEMENT_SIZE
-	} else if G_MEM.cat_head.direction == Cat_Direction.DOWN {
+	case Cat_Direction.DOWN:
 		G_MEM.cat_head.pos.y += GRID_ELEMENT_SIZE
-	} else if G_MEM.cat_head.direction == Cat_Direction.LEFT {
+	case Cat_Direction.LEFT:
 		G_MEM.cat_head.pos.x -= GRID_ELEMENT_SIZE
-	} else if G_MEM.cat_head.direction == Cat_Direction.RIGHT {
+	case Cat_Direction.RIGHT:
 		G_MEM.cat_head.pos.x += GRID_ELEMENT_SIZE
 	}
 }
@@ -314,8 +320,7 @@ is_cat_outside_canvas :: proc() -> bool {
 play_dead_animation :: proc() {
 	if !should_update_death_animation() {return}
 	if G_MEM.currently_dying_segment == -1 {
-		G_MEM.cat_alive = false
-		G_MEM.playing_dead_animation = false
+		G_MEM.game_state = .SCORE_SCREEN
 		return
 	}
 
