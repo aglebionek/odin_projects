@@ -3,8 +3,7 @@
 
 // TODOs and issues
 // Get spall working
-// Add a start game screen
-// resize the player space a bit, so we can see when cat goes out the grid
+// Add victory screen
 // Add sound effects
 // Set the .exe icon
 // Stars can spawn on the cat
@@ -74,7 +73,7 @@ Game_Memory :: struct {
 // VARIABLES & POINTERS
 G_MEM: ^Game_Memory
 CAT_TEXTURES: ^Cat_Textures
-CAT_TEXTURES_INDEXABLE: [9]^rl.Texture
+CAT_TEXTURES_INDEXABLE: ^[9]^rl.Texture
 STAR_TEXTURES: ^Star_Textures
 game_camera :: proc() -> rl.Camera2D {
 	w := f32(rl.GetScreenWidth())
@@ -82,6 +81,7 @@ game_camera :: proc() -> rl.Camera2D {
 
 	lower_dim := h if h < w else w
 	zoom := lower_dim / CANVAS_SIZE
+	zoom -= zoom / GRID_ELEMENT_SIZE * 3
 
 	offset_left := (w - CANVAS_SIZE * zoom) / 2
 	offset_top := (h - CANVAS_SIZE * zoom) / 2
@@ -103,6 +103,7 @@ game_init_window :: proc() {
 game_init :: proc() {
 	G_MEM = new(Game_Memory)
 	CAT_TEXTURES = new(Cat_Textures)
+	CAT_TEXTURES_INDEXABLE = new([9]^rl.Texture)
 	STAR_TEXTURES = new(Star_Textures)
 
 	CAT_TEXTURES^ = Cat_Textures {
@@ -117,7 +118,7 @@ game_init :: proc() {
 		dead      = rl.LoadTexture("assets/kot_ded.png"),
 	}
 
-	CAT_TEXTURES_INDEXABLE = [9]^rl.Texture {
+	CAT_TEXTURES_INDEXABLE^ = [9]^rl.Texture {
 		&CAT_TEXTURES.left,
 		&CAT_TEXTURES.right,
 		&CAT_TEXTURES.up,
@@ -146,19 +147,16 @@ game_init :: proc() {
 game_shutdown :: proc() {
 	free(G_MEM)
 	free(CAT_TEXTURES)
+	free(CAT_TEXTURES_INDEXABLE)
 	free(STAR_TEXTURES)
 }
 
 set_memory_to_initial_state :: proc() {
 	G_MEM^ = Game_Memory {
-		cat_head                = Cat_Segment {
-			V2i8{0, 0},
-			Cat_Direction.RIGHT,
-			0,
-		},
+		cat_head                = Cat_Segment{V2i8{0, 0}, Cat_Direction.RIGHT, 0},
 		cat_tail_index          = 0,
 		currently_dying_segment = 0,
-		game_state              = .GAMEPLAY,
+		game_state              = .GAMEPLAY if G_MEM.game_state == .SCORE_SCREEN else .START_SCREEN,
 		pending_cat_direction   = Cat_Direction.RIGHT,
 		star_exists             = false,
 		star_pos                = get_random_pos(),
@@ -173,6 +171,13 @@ draw :: proc() {
 	camera := game_camera()
 
 	rl.BeginMode2D(camera)
+
+	if G_MEM.game_state == .START_SCREEN {
+		rl.DrawText("Press Enter to start", 10, CANVAS_SIZE / 2, 10, rl.WHITE)
+		rl.EndMode2D()
+		rl.EndDrawing()
+		return
+	}
 
 	if G_MEM.game_state == .SCORE_SCREEN {
 		rl.DrawText("Game Over", 10, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
@@ -228,9 +233,14 @@ update :: proc() {
 	if G_MEM.game_state == .DYING {
 		return
 	}
-	if G_MEM.game_state == .SCORE_SCREEN {
+	if G_MEM.game_state == .START_SCREEN {
 		if rl.IsKeyPressed(.ENTER) {
 			G_MEM.game_state = .GAMEPLAY
+		}
+		return
+	}
+	if G_MEM.game_state == .SCORE_SCREEN {
+		if rl.IsKeyPressed(.ENTER) {
 			set_memory_to_initial_state()
 		}
 		return
