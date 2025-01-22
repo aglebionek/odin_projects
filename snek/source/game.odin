@@ -4,8 +4,7 @@
 
 // TODOs and issues
 // Get spall working
-// reaching max length crashes the game
-// Add victory screen
+// Make the texts match the grid size
 // Add sound effects
 // Set the .exe icon
 // If a star spawns next to the cat's head, it will have the wrong texture
@@ -20,9 +19,9 @@ import rl "vendor:raylib"
 // --- GLOBAL ---
 // CONSTANTS
 GRID_ELEMENT_SIZE :: 16
-NUMBER_OF_GRID_ELEMENT_IN_A_ROW :: 2
+NUMBER_OF_GRID_ELEMENT_IN_A_ROW :: 8
 CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENT_IN_A_ROW
-MOVE_SNAKE_EVERY_N_SECONDS :: 1
+MOVE_SNAKE_EVERY_N_SECONDS :: 0.35
 PURPLE :: rl.Color{255, 0, 255, 200}
 DEATH_ANIMATION_TIME_IN_SECONDS :: f32(1.2)
 // TYPES
@@ -156,13 +155,12 @@ game_shutdown :: proc() {
 
 set_memory_to_initial_state :: proc() {
 	G_MEM^ = Game_Memory {
-		cat_head                = Cat_Segment{V2i8{0, 0}, Cat_Direction.RIGHT, 0},
+		cat_head                = Cat_Segment{V2i8{0, 0}, Cat_Direction.RIGHT, 1},
 		cat_tail_index          = 0,
 		currently_dying_segment = 0,
-		game_state              = .GAMEPLAY if G_MEM.game_state == .SCORE_SCREEN else .START_SCREEN,
+		game_state              = .GAMEPLAY if G_MEM.game_state == .SCORE_SCREEN || G_MEM.game_state == .VICTORY_SCREEN else .START_SCREEN,
 		pending_cat_direction   = Cat_Direction.RIGHT,
 		star_exists             = false,
-		star_pos                = get_new_random_star_pos(),
 		star_textures_index     = 1,
 	}
 }
@@ -273,7 +271,7 @@ update :: proc() {
 
 	if is_cat_pos_at_star_pos {
 		G_MEM.cat_tail_index += 1
-		if G_MEM.cat_tail_index == CANVAS_SIZE {
+		if G_MEM.cat_tail_index == NUMBER_OF_GRID_ELEMENT_IN_A_ROW * NUMBER_OF_GRID_ELEMENT_IN_A_ROW -1 {
 			G_MEM.game_state = .VICTORY_SCREEN
 			return
 		}
