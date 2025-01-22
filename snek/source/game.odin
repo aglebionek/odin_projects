@@ -1,12 +1,13 @@
 // Code ideas:
 // change G_MEM.cat_segments from AOS to SOA? Cat_Segment {pos_x: [1]f32, pos_y: [1]f32, direction: [1]Cat_Direction}
+// a better way of generating random star positions? (get_new_random_star_pos) For example, using a list of all non-occupied positions? Or map each coordinate to unique index, so we can just pick a random index from the available ones?
 
 // TODOs and issues
 // Get spall working
+// reaching max length crashes the game
 // Add victory screen
 // Add sound effects
 // Set the .exe icon
-// Stars can spawn on the cat
 // If a star spawns next to the cat's head, it will have the wrong texture
 // If cat eats a star, and a new star spawns next to cat's head, it will have the wrong texture
 
@@ -19,9 +20,9 @@ import rl "vendor:raylib"
 // --- GLOBAL ---
 // CONSTANTS
 GRID_ELEMENT_SIZE :: 16
-NUMBER_OF_GRID_ELEMENTS :: 8
-CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENTS
-MOVE_SNAKE_EVERY_N_SECONDS :: .3
+NUMBER_OF_GRID_ELEMENT_IN_A_ROW :: 2
+CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENT_IN_A_ROW
+MOVE_SNAKE_EVERY_N_SECONDS :: 1
 PURPLE :: rl.Color{255, 0, 255, 200}
 DEATH_ANIMATION_TIME_IN_SECONDS :: f32(1.2)
 // TYPES
@@ -37,6 +38,7 @@ Game_States :: enum u8 {
 	GAMEPLAY,
 	DYING,
 	SCORE_SCREEN,
+	VICTORY_SCREEN,
 }
 Cat_Segment :: struct {
 	pos:           V2i8,
@@ -65,10 +67,11 @@ Game_Memory :: struct {
 	currently_dying_segment: int,
 	cat_tail_index:          int,
 	star_pos:                V2i8,
-	pending_cat_direction:   Cat_Direction,
 	star_exists:             bool,
 	star_textures_index:     i8,
 	game_state:              Game_States,
+	pending_cat_direction:   Cat_Direction,
+
 }
 // VARIABLES & POINTERS
 G_MEM: ^Game_Memory
@@ -159,7 +162,7 @@ set_memory_to_initial_state :: proc() {
 		game_state              = .GAMEPLAY if G_MEM.game_state == .SCORE_SCREEN else .START_SCREEN,
 		pending_cat_direction   = Cat_Direction.RIGHT,
 		star_exists             = false,
-		star_pos                = get_random_pos(),
+		star_pos                = get_new_random_star_pos(),
 		star_textures_index     = 1,
 	}
 }
@@ -179,7 +182,7 @@ draw :: proc() {
 		return
 	}
 
-	if G_MEM.game_state == .SCORE_SCREEN {
+	if G_MEM.game_state == .SCORE_SCREEN || G_MEM.game_state == .VICTORY_SCREEN {
 		rl.DrawText("Game Over", 10, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
 		rl.DrawText(
 			fmt.ctprintf("Score: %d", G_MEM.cat_tail_index),
@@ -239,7 +242,7 @@ update :: proc() {
 		}
 		return
 	}
-	if G_MEM.game_state == .SCORE_SCREEN {
+	if G_MEM.game_state == .SCORE_SCREEN || G_MEM.game_state == .VICTORY_SCREEN {
 		if rl.IsKeyPressed(.ENTER) {
 			set_memory_to_initial_state()
 		}
@@ -269,8 +272,12 @@ update :: proc() {
 	G_MEM.star_textures_index *= -1
 
 	if is_cat_pos_at_star_pos {
-		G_MEM.star_exists = false
 		G_MEM.cat_tail_index += 1
+		if G_MEM.cat_tail_index == CANVAS_SIZE {
+			G_MEM.game_state = .VICTORY_SCREEN
+			return
+		}
+		G_MEM.star_exists = false
 	} else {
 		move_cat_body()
 	}
@@ -380,7 +387,7 @@ draw_star :: proc() {
 	star_pos := G_MEM.star_pos
 
 	if !G_MEM.star_exists {
-		random_pos := get_random_pos()
+		random_pos := get_new_random_star_pos()
 		star_pos.x = random_pos.x
 		star_pos.y = random_pos.y
 		G_MEM.star_exists = true
@@ -395,16 +402,22 @@ draw_star :: proc() {
 	rl.DrawTextureEx(star_texture^, grid_to_world(star_pos), 0, .9, rl.WHITE)
 }
 
-get_random_pos :: proc() -> V2i8 {
-	return V2i8 {
-		i8(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENTS - 1)),
-		i8(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENTS - 1)),
+// naive solution of not spawning stars in the snake, is there a better way?
+get_new_random_star_pos :: proc() -> V2i8 {
+	new_pos := V2i8 {
+		i8(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENT_IN_A_ROW - 1)),
+		i8(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENT_IN_A_ROW - 1)),
 	}
+	if new_pos.x == G_MEM.cat_head.pos.x && new_pos.y == G_MEM.cat_head.pos.y {
+		return get_new_random_star_pos()
+	}
+	for i in 0 ..< G_MEM.cat_tail_index {
+		if new_pos.x == G_MEM.cat_segments[i].pos.x && new_pos.y == G_MEM.cat_segments[i].pos.y {
+			return get_new_random_star_pos()
+		}
+	}
+	return new_pos
 }
-
-// world_to_grid :: proc(world_pos: rl.Vector2) -> V2u8 {
-// 	return [2]i8{i8(world_pos.x / GRID_ELEMENT_SIZE), i8(world_pos.y / GRID_ELEMENT_SIZE)}
-// }
 
 grid_to_world :: proc(grid_pos: V2i8) -> rl.Vector2 {
 	return rl.Vector2 {
@@ -432,9 +445,9 @@ is_cat_head_inside_cat_body :: proc() -> bool {
 is_cat_outside_canvas :: proc() -> bool {
 	return(
 		G_MEM.cat_head.pos.x < 0 ||
-		G_MEM.cat_head.pos.x >= NUMBER_OF_GRID_ELEMENTS ||
+		G_MEM.cat_head.pos.x >= NUMBER_OF_GRID_ELEMENT_IN_A_ROW ||
 		G_MEM.cat_head.pos.y < 0 ||
-		G_MEM.cat_head.pos.y >= NUMBER_OF_GRID_ELEMENTS \
+		G_MEM.cat_head.pos.y >= NUMBER_OF_GRID_ELEMENT_IN_A_ROW \
 	)
 }
 
