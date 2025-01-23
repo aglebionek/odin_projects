@@ -3,6 +3,7 @@
 // a better way of generating random star positions? (get_new_random_star_pos) For example, using a list of all non-occupied positions? Or map each coordinate to unique index, so we can just pick a random index from the available ones?
 
 // TODOs and issues
+// Add victory animation, fix texts in victory screen
 // Get spall working
 // Make the texts match the grid size
 // Add sound effects
@@ -35,7 +36,8 @@ Cat_Direction :: enum u8 {
 Game_States :: enum u8 {
 	START_SCREEN,
 	GAMEPLAY,
-	DYING,
+	DYING_ANIMATION,
+	VICTORY_ANIMATION,
 	SCORE_SCREEN,
 	VICTORY_SCREEN,
 }
@@ -63,14 +65,13 @@ Game_Memory :: struct {
 	cat_segments:            [CANVAS_SIZE]Cat_Segment, // the last element is the tail
 	cat_head:                Cat_Segment,
 	time_since_last_move:    f32,
-	currently_dying_segment: int,
-	cat_tail_index:          int,
+	currently_dying_segment: i32,
+	cat_tail_index:          i32,
 	star_pos:                V2i8,
 	star_exists:             bool,
 	star_textures_index:     i8,
 	game_state:              Game_States,
 	pending_cat_direction:   Cat_Direction,
-
 }
 // VARIABLES & POINTERS
 G_MEM: ^Game_Memory
@@ -195,7 +196,11 @@ draw :: proc() {
 		return
 	}
 
-	if G_MEM.game_state == .DYING {
+	if G_MEM.game_state == .VICTORY_ANIMATION {
+		play_victory_animation()
+	}
+
+	if G_MEM.game_state == .DYING_ANIMATION {
 		play_dead_animation()
 	}
 
@@ -230,8 +235,9 @@ draw :: proc() {
 }
 
 update :: proc() {
+	draw_fps()
 	G_MEM.time_since_last_move += rl.GetFrameTime()
-	if G_MEM.game_state == .DYING {
+	if G_MEM.game_state == .DYING_ANIMATION || G_MEM.game_state == .VICTORY_ANIMATION {
 		return
 	}
 	if G_MEM.game_state == .START_SCREEN {
@@ -259,7 +265,7 @@ update :: proc() {
 
 	if is_cat_outside_canvas() {
 		move_cat_body()
-		G_MEM.game_state = .DYING
+		G_MEM.game_state = .DYING_ANIMATION
 		G_MEM.time_since_last_move += DEATH_ANIMATION_TIME_IN_SECONDS
 		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
 		return
@@ -271,8 +277,13 @@ update :: proc() {
 
 	if is_cat_pos_at_star_pos {
 		G_MEM.cat_tail_index += 1
-		if G_MEM.cat_tail_index == NUMBER_OF_GRID_ELEMENT_IN_A_ROW * NUMBER_OF_GRID_ELEMENT_IN_A_ROW -1 {
-			G_MEM.game_state = .VICTORY_SCREEN
+		if G_MEM.cat_tail_index ==
+		   NUMBER_OF_GRID_ELEMENT_IN_A_ROW * NUMBER_OF_GRID_ELEMENT_IN_A_ROW - 1 {
+			G_MEM.cat_head.texture_index = 7
+			for i in 0 ..< G_MEM.cat_tail_index {
+				G_MEM.cat_segments[i].texture_index = 3
+			}
+			G_MEM.game_state = .VICTORY_ANIMATION
 			return
 		}
 		G_MEM.star_exists = false
@@ -281,7 +292,7 @@ update :: proc() {
 	}
 
 	if is_cat_head_inside_cat_body() {
-		G_MEM.game_state = .DYING
+		G_MEM.game_state = .DYING_ANIMATION
 		G_MEM.time_since_last_move += DEATH_ANIMATION_TIME_IN_SECONDS
 		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
 		return
@@ -301,6 +312,10 @@ should_update_death_animation :: proc() -> bool {
 	time_to_die_for_segment :=
 		DEATH_ANIMATION_TIME_IN_SECONDS if G_MEM.cat_tail_index == 0 else DEATH_ANIMATION_TIME_IN_SECONDS / f32(G_MEM.cat_tail_index)
 	return G_MEM.time_since_last_move >= time_to_die_for_segment
+}
+
+should_update_victory_animation :: proc() -> bool {
+	return G_MEM.time_since_last_move >= .1
 }
 
 move_cat_head :: proc() {
@@ -333,6 +348,11 @@ play_dead_animation :: proc() {
 	G_MEM.cat_head.texture_index = 8
 	G_MEM.currently_dying_segment -= 1
 	G_MEM.time_since_last_move = 0
+}
+
+play_victory_animation :: proc() {
+	if !should_update_victory_animation() {return}
+	set_random_cat_to_pop()
 }
 
 
@@ -382,6 +402,9 @@ determine_cat_texture :: proc(is_cat_pos_at_star_pos: bool) -> u8 {
 
 // star
 draw_star :: proc() {
+	if G_MEM.game_state == .VICTORY_ANIMATION {
+		return
+	}
 	star_pos := G_MEM.star_pos
 
 	if !G_MEM.star_exists {
@@ -400,6 +423,12 @@ draw_star :: proc() {
 	rl.DrawTextureEx(star_texture^, grid_to_world(star_pos), 0, .9, rl.WHITE)
 }
 
+draw_fps :: proc() {
+	corner_x := rl.GetScreenWidth() - CANVAS_SIZE
+	corner_y: i32 = 0
+	rl.DrawFPS(corner_x, corner_y)
+}
+
 // naive solution of not spawning stars in the snake, is there a better way?
 get_new_random_star_pos :: proc() -> V2i8 {
 	new_pos := V2i8 {
@@ -415,6 +444,23 @@ get_new_random_star_pos :: proc() -> V2i8 {
 		}
 	}
 	return new_pos
+}
+
+set_random_cat_to_pop :: proc() {
+	cat_segments_len: i32 = len(G_MEM.cat_segments) - 1
+	if G_MEM.currently_dying_segment == cat_segments_len {
+		G_MEM.game_state = .VICTORY_SCREEN
+		return
+	}
+	random_index := rl.GetRandomValue(0, cat_segments_len)
+	if G_MEM.currently_dying_segment != 0 {
+		for G_MEM.cat_segments[random_index].texture_index == 7 {
+			random_index = rl.GetRandomValue(0, cat_segments_len)
+		}
+	}
+	G_MEM.cat_segments[random_index].texture_index = 7
+	G_MEM.currently_dying_segment += 1
+	G_MEM.time_since_last_move = 0
 }
 
 grid_to_world :: proc(grid_pos: V2i8) -> rl.Vector2 {
