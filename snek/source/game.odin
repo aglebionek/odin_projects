@@ -4,11 +4,10 @@
 
 // TODOs and issues
 // Victory animation is scuffed, rework it later
+// make the cat behind the head always face the head
 // Make the texts match the grid size
 // Add sound effects
 // Set the .exe icon
-// If a star spawns next to the cat's head, it will have the wrong texture
-// If cat eats a star, and a new star spawns next to cat's head, it will have the wrong texture
 
 package game
 
@@ -20,7 +19,7 @@ import rl "vendor:raylib"
 GRID_ELEMENT_SIZE :: 16
 NUMBER_OF_GRID_ELEMENT_IN_A_ROW :: 8
 CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENT_IN_A_ROW
-MOVE_SNAKE_EVERY_N_SECONDS :: 0.35
+MOVE_SNAKE_EVERY_N_SECONDS :: .35
 PURPLE :: rl.Color{255, 0, 255, 200}
 DEATH_ANIMATION_TIME_IN_SECONDS :: f32(1.2)
 // TYPES
@@ -94,7 +93,7 @@ game_camera :: proc() -> rl.Camera2D {
 @(export)
 game_init_window :: proc() {
 	icon: rl.Image = rl.LoadImage("assets/kot_front.png")
-	rl.SetConfigFlags({.WINDOW_RESIZABLE })
+	rl.SetConfigFlags({.WINDOW_RESIZABLE})
 	rl.InitWindow(800, 600, "Snek")
 	rl.SetWindowIcon(icon)
 	rl.MaximizeWindow()
@@ -226,7 +225,7 @@ draw :: proc() {
 		rl.WHITE,
 	)
 
-	draw_star()
+	rl.DrawTextureEx(determine_star_texture()^, grid_to_world(G_MEM.star_pos), 0, .9, rl.WHITE)
 
 	rl.EndMode2D()
 
@@ -234,7 +233,6 @@ draw :: proc() {
 }
 
 update :: proc() {
-	// draw_fps()
 	G_MEM.time_since_last_move += rl.GetFrameTime()
 	if G_MEM.game_state == .DYING_ANIMATION || G_MEM.game_state == .VICTORY_ANIMATION {return}
 	if G_MEM.game_state == .START_SCREEN {
@@ -268,11 +266,10 @@ update :: proc() {
 		return
 	}
 
-	is_cat_pos_at_star_pos := is_cat_pos_exactly_at_star_pos()
 	G_MEM.time_since_last_move = 0
 	G_MEM.star_textures_index *= -1
 
-	if is_cat_pos_at_star_pos {
+	if is_cat_pos_exactly_at_star_pos() {
 		G_MEM.cat_tail_index += 1
 		if G_MEM.cat_tail_index ==
 		   NUMBER_OF_GRID_ELEMENT_IN_A_ROW * NUMBER_OF_GRID_ELEMENT_IN_A_ROW - 1 {
@@ -283,7 +280,7 @@ update :: proc() {
 			G_MEM.game_state = .VICTORY_ANIMATION
 			return
 		}
-		G_MEM.star_exists = false
+		draw_star()
 	} else {
 		move_cat_body()
 	}
@@ -295,7 +292,7 @@ update :: proc() {
 		return
 	}
 
-	G_MEM.cat_head.texture_index = determine_cat_texture(is_cat_pos_at_star_pos)
+	determine_cat_texture()
 }
 
 // --- CUSTOM USER PROCEDURES ---
@@ -390,11 +387,10 @@ is_new_direction_oposite_to_current :: proc(new_direction: Cat_Direction) -> boo
 }
 // -- END: cat direction
 
-determine_cat_texture :: proc(is_cat_pos_at_star_pos: bool) -> u8 {
-	cat_texture_index :=
-		u8(G_MEM.cat_head.direction) + u8(4) * u8(is_cat_head_next_to_star(is_cat_pos_at_star_pos))
+determine_cat_texture :: proc() {
+	cat_texture_index := u8(G_MEM.cat_head.direction) + u8(4) * u8(is_cat_head_next_to_star())
 
-	return cat_texture_index
+	G_MEM.cat_head.texture_index = cat_texture_index
 }
 
 // star
@@ -404,20 +400,18 @@ draw_star :: proc() {
 	}
 	star_pos := G_MEM.star_pos
 
-	if !G_MEM.star_exists {
-		random_pos := get_new_random_star_pos()
-		star_pos.x = random_pos.x
-		star_pos.y = random_pos.y
-		G_MEM.star_exists = true
-		G_MEM.star_pos = star_pos
-	}
+	random_pos := get_new_random_star_pos()
+	star_pos.x = random_pos.x
+	star_pos.y = random_pos.y
+	G_MEM.star_pos = star_pos
+}
 
+determine_star_texture :: proc() -> ^rl.Texture {
 	star_texture := &STAR_TEXTURES.star1
 	if G_MEM.star_textures_index == 1 {
 		star_texture = &STAR_TEXTURES.star2
 	}
-
-	rl.DrawTextureEx(star_texture^, grid_to_world(star_pos), 0, .9, rl.WHITE)
+	return star_texture
 }
 
 draw_fps :: proc() {
@@ -492,10 +486,7 @@ is_cat_outside_canvas :: proc() -> bool {
 	)
 }
 
-is_cat_head_next_to_star :: proc(is_cat_pos_at_star_pos: bool) -> bool {
-	if is_cat_pos_at_star_pos {
-		return false
-	}
+is_cat_head_next_to_star :: proc() -> bool {
 	cat_grid_pos := G_MEM.cat_head.pos
 	star_grid_pos := G_MEM.star_pos
 
