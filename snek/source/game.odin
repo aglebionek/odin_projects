@@ -4,7 +4,6 @@
 
 // TODOs and issues
 // Victory animation is scuffed, rework it later
-// make the cat behind the head always face the head
 // Make the texts match the grid size
 // Add sound effects
 // Set the .exe icon
@@ -65,7 +64,6 @@ Game_Memory :: struct {
 	currently_dying_segment: i32,
 	cat_tail_index:          i32,
 	star_pos:                V2i8,
-	star_exists:             bool,
 	star_textures_index:     i8,
 	game_state:              Game_States,
 	pending_cat_direction:   Cat_Direction,
@@ -159,7 +157,6 @@ set_memory_to_initial_state :: proc() {
 		currently_dying_segment = 0,
 		game_state              = .GAMEPLAY if G_MEM.game_state == .SCORE_SCREEN || G_MEM.game_state == .VICTORY_SCREEN else .START_SCREEN,
 		pending_cat_direction   = Cat_Direction.RIGHT,
-		star_exists             = false,
 		star_textures_index     = 1,
 	}
 }
@@ -203,29 +200,9 @@ draw :: proc() {
 	}
 
 	draw_edges()
-
-	// draw a cat for each body part
-	for i in 0 ..< G_MEM.cat_tail_index {
-		cat_segment := G_MEM.cat_segments[i]
-		rl.DrawTextureEx(
-			CAT_TEXTURES_INDEXABLE[cat_segment.texture_index]^,
-			grid_to_world(cat_segment.pos),
-			0,
-			.9,
-			PURPLE,
-		)
-	}
-
-	// draw the cat head
-	rl.DrawTextureEx(
-		CAT_TEXTURES_INDEXABLE[G_MEM.cat_head.texture_index]^,
-		grid_to_world(G_MEM.cat_head.pos),
-		0,
-		.9,
-		rl.WHITE,
-	)
-
-	rl.DrawTextureEx(determine_star_texture()^, grid_to_world(G_MEM.star_pos), 0, .9, rl.WHITE)
+	draw_cat_head()
+	draw_cat_body()
+	draw_star()
 
 	rl.EndMode2D()
 
@@ -248,9 +225,9 @@ update :: proc() {
 		return
 	}
 
-	determine_new_cat_direction()
+	set_direction_to_turn_on_next_step()
 
-	if !should_update_state() {return}
+	if !should_step() {return}
 
 	G_MEM.cat_head.texture_index %= 4
 	G_MEM.cat_segments[G_MEM.cat_tail_index] = G_MEM.cat_head
@@ -280,7 +257,7 @@ update :: proc() {
 			G_MEM.game_state = .VICTORY_ANIMATION
 			return
 		}
-		draw_star()
+		spawn_new_star()
 	} else {
 		move_cat_body()
 	}
@@ -298,7 +275,7 @@ update :: proc() {
 // --- CUSTOM USER PROCEDURES ---
 
 // since it's a snake game, the update of game state is done every N seconds
-should_update_state :: proc() -> bool {
+should_step :: proc() -> bool {
 	return G_MEM.time_since_last_move >= MOVE_SNAKE_EVERY_N_SECONDS
 }
 
@@ -346,16 +323,59 @@ play_dead_animation :: proc() {
 
 play_victory_animation :: proc() {
 	if !should_update_victory_animation() {return}
-	set_random_cat_to_pop()
-}
 
+	cat_segments_len: i32 = len(G_MEM.cat_segments) - 1
+	if G_MEM.currently_dying_segment == cat_segments_len {
+		G_MEM.game_state = .VICTORY_SCREEN
+		return
+	}
+	random_index := rl.GetRandomValue(0, cat_segments_len)
+	if G_MEM.currently_dying_segment != 0 {
+		for G_MEM.cat_segments[random_index].texture_index == 7 {
+			random_index = rl.GetRandomValue(0, cat_segments_len)
+		}
+	}
+	G_MEM.cat_segments[random_index].texture_index = 7
+	G_MEM.currently_dying_segment += 1
+	G_MEM.time_since_last_move = 0
+}
 
 draw_edges :: proc() {
 	rl.DrawRectangleLinesEx(rl.Rectangle{0, 0, CANVAS_SIZE, CANVAS_SIZE}, 1, PURPLE)
 }
 
+draw_cat_head :: proc() {
+	rl.DrawTextureEx(
+		CAT_TEXTURES_INDEXABLE[G_MEM.cat_head.texture_index]^,
+		grid_to_world(G_MEM.cat_head.pos),
+		0,
+		.9,
+		rl.WHITE,
+	)
+}
+
+draw_cat_body :: proc() {
+	if G_MEM.cat_tail_index == 0 {return}
+	G_MEM.cat_segments[G_MEM.cat_tail_index - 1].texture_index = G_MEM.cat_head.texture_index % 4
+
+	for i in 0 ..< G_MEM.cat_tail_index   {
+		cat_segment := G_MEM.cat_segments[i]
+		rl.DrawTextureEx(
+			CAT_TEXTURES_INDEXABLE[cat_segment.texture_index]^,
+			grid_to_world(cat_segment.pos),
+			0,
+			.9,
+			PURPLE,
+		)
+	}
+}
+
+draw_star :: proc() {
+	rl.DrawTextureEx(determine_star_texture()^, grid_to_world(G_MEM.star_pos), 0, .9, rl.WHITE)
+}
+
 // -- BEGIN: cat direction
-determine_new_cat_direction :: proc() {
+set_direction_to_turn_on_next_step :: proc() {
 	new_cat_direction := G_MEM.pending_cat_direction
 	#partial switch rl.GetKeyPressed() {
 	case .UP, .W:
@@ -389,21 +409,14 @@ is_new_direction_oposite_to_current :: proc(new_direction: Cat_Direction) -> boo
 
 determine_cat_texture :: proc() {
 	cat_texture_index := u8(G_MEM.cat_head.direction) + u8(4) * u8(is_cat_head_next_to_star())
-
 	G_MEM.cat_head.texture_index = cat_texture_index
+	G_MEM.cat_segments[G_MEM.cat_tail_index] = G_MEM.cat_head
 }
 
 // star
-draw_star :: proc() {
-	if G_MEM.game_state == .VICTORY_ANIMATION {
-		return
-	}
-	star_pos := G_MEM.star_pos
-
+spawn_new_star :: proc() {
 	random_pos := get_new_random_star_pos()
-	star_pos.x = random_pos.x
-	star_pos.y = random_pos.y
-	G_MEM.star_pos = star_pos
+	G_MEM.star_pos = random_pos
 }
 
 determine_star_texture :: proc() -> ^rl.Texture {
@@ -435,23 +448,6 @@ get_new_random_star_pos :: proc() -> V2i8 {
 		}
 	}
 	return new_pos
-}
-
-set_random_cat_to_pop :: proc() {
-	cat_segments_len: i32 = len(G_MEM.cat_segments) - 1
-	if G_MEM.currently_dying_segment == cat_segments_len {
-		G_MEM.game_state = .VICTORY_SCREEN
-		return
-	}
-	random_index := rl.GetRandomValue(0, cat_segments_len)
-	if G_MEM.currently_dying_segment != 0 {
-		for G_MEM.cat_segments[random_index].texture_index == 7 {
-			random_index = rl.GetRandomValue(0, cat_segments_len)
-		}
-	}
-	G_MEM.cat_segments[random_index].texture_index = 7
-	G_MEM.currently_dying_segment += 1
-	G_MEM.time_since_last_move = 0
 }
 
 grid_to_world :: proc(grid_pos: V2i8) -> rl.Vector2 {
