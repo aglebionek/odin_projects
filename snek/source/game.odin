@@ -3,8 +3,7 @@
 // a better way of generating random star positions? (get_new_random_star_pos) For example, using a list of all non-occupied positions? Or map each coordinate to unique index, so we can just pick a random index from the available ones?
 
 // TODOs and issues
-// Add victory animation, fix texts in victory screen
-// Get spall working
+// Victory animation is scuffed, rework it later
 // Make the texts match the grid size
 // Add sound effects
 // Set the .exe icon
@@ -14,7 +13,6 @@
 package game
 
 import "core:fmt"
-// import "core:prof/spall"
 import rl "vendor:raylib"
 
 // --- GLOBAL ---
@@ -96,10 +94,11 @@ game_camera :: proc() -> rl.Camera2D {
 @(export)
 game_init_window :: proc() {
 	icon: rl.Image = rl.LoadImage("assets/kot_front.png")
-	rl.SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT})
+	rl.SetConfigFlags({.WINDOW_RESIZABLE })
 	rl.InitWindow(800, 600, "Snek")
 	rl.SetWindowIcon(icon)
 	rl.MaximizeWindow()
+	rl.SetTargetFPS(30)
 }
 
 @(export)
@@ -235,11 +234,9 @@ draw :: proc() {
 }
 
 update :: proc() {
-	draw_fps()
+	// draw_fps()
 	G_MEM.time_since_last_move += rl.GetFrameTime()
-	if G_MEM.game_state == .DYING_ANIMATION || G_MEM.game_state == .VICTORY_ANIMATION {
-		return
-	}
+	if G_MEM.game_state == .DYING_ANIMATION || G_MEM.game_state == .VICTORY_ANIMATION {return}
 	if G_MEM.game_state == .START_SCREEN {
 		if rl.IsKeyPressed(.ENTER) {
 			G_MEM.game_state = .GAMEPLAY
