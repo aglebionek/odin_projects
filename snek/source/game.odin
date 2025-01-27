@@ -4,6 +4,9 @@
 
 // TODOs and issues
 // Victory animation is scuffed, rework it later
+// Fix dying animation, the cat directly behind the head doesn't die
+// Fix victory screen
+// Make a difficulty selection screen at the start to train ui coding
 // Make the texts match the grid size
 // Add sound effects
 // Set the .exe icon
@@ -68,11 +71,17 @@ Game_Memory :: struct {
 	game_state:              Game_States,
 	pending_cat_direction:   Cat_Direction,
 }
+
+Game_Sounds :: struct {
+	pop: rl.Sound,
+	eat: rl.Sound,
+}
 // VARIABLES & POINTERS
 G_MEM: ^Game_Memory
 CAT_TEXTURES: ^Cat_Textures
 CAT_TEXTURES_INDEXABLE: ^[9]^rl.Texture
 STAR_TEXTURES: ^Star_Textures
+GAME_SOUNDS: ^Game_Sounds
 game_camera :: proc() -> rl.Camera2D {
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
@@ -96,6 +105,7 @@ game_init_window :: proc() {
 	rl.SetWindowIcon(icon)
 	rl.MaximizeWindow()
 	rl.SetTargetFPS(30)
+	rl.InitAudioDevice()
 }
 
 @(export)
@@ -104,6 +114,7 @@ game_init :: proc() {
 	CAT_TEXTURES = new(Cat_Textures)
 	CAT_TEXTURES_INDEXABLE = new([9]^rl.Texture)
 	STAR_TEXTURES = new(Star_Textures)
+	GAME_SOUNDS = new(Game_Sounds)
 
 	CAT_TEXTURES^ = Cat_Textures {
 		left      = rl.LoadTexture("assets/kot_left.png"),
@@ -134,6 +145,11 @@ game_init :: proc() {
 		star2 = rl.LoadTexture("assets/star_02.png"),
 	}
 
+	GAME_SOUNDS^ = Game_Sounds {
+		pop = rl.LoadSound("assets/pop.ogg"),
+		eat = rl.LoadSound("assets/hap.ogg"),
+	}
+
 	set_memory_to_initial_state()
 
 	game_hot_reloaded(G_MEM)
@@ -148,6 +164,7 @@ game_shutdown :: proc() {
 	free(CAT_TEXTURES)
 	free(CAT_TEXTURES_INDEXABLE)
 	free(STAR_TEXTURES)
+	free(GAME_SOUNDS)
 }
 
 set_memory_to_initial_state :: proc() {
@@ -248,6 +265,7 @@ update :: proc() {
 
 	if is_cat_pos_exactly_at_star_pos() {
 		G_MEM.cat_tail_index += 1
+		rl.PlaySound(GAME_SOUNDS.eat)
 		if G_MEM.cat_tail_index ==
 		   NUMBER_OF_GRID_ELEMENT_IN_A_ROW * NUMBER_OF_GRID_ELEMENT_IN_A_ROW - 1 {
 			G_MEM.cat_head.texture_index = 7
@@ -483,20 +501,25 @@ is_cat_outside_canvas :: proc() -> bool {
 }
 
 is_cat_head_next_to_star :: proc() -> bool {
+	result := false
 	cat_grid_pos := G_MEM.cat_head.pos
 	star_grid_pos := G_MEM.star_pos
 
 	// cast to i8 because of underflow issues
 	if cat_grid_pos.x == star_grid_pos.x {
 		y_diff := abs(i8(cat_grid_pos.y - star_grid_pos.y))
-		return y_diff == 1
+		result = y_diff == 1
 	}
 	if cat_grid_pos.y == star_grid_pos.y {
 		x_diff := abs(i8(cat_grid_pos.x - star_grid_pos.x))
-		return x_diff == 1
+		result = x_diff == 1
 	}
 
-	return false
+	if result {
+		rl.PlaySound(GAME_SOUNDS.pop)
+	}
+
+	return result
 }
 
 // --- CORE UNEDITABLE PROCEDURES ---
