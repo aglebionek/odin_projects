@@ -5,7 +5,7 @@
 // TODOs and issues
 // Victory animation is scuffed, rework it later
 // Fix victory screen (change texts)
-// Make a difficulty selection screen at the start to train ui coding
+// Make a difficulty selection screen at the start to train ui coding/use an external ui raylib library
 // Make the texts match the grid size
 // Set the .exe icon
 
@@ -17,8 +17,8 @@ import rl "vendor:raylib"
 // --- GLOBAL ---
 // CONSTANTS
 GRID_ELEMENT_SIZE :: 16
-NUMBER_OF_GRID_ELEMENT_IN_A_ROW :: 8
-CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENT_IN_A_ROW
+NUMBER_OF_GRID_ELEMENTS_IN_A_ROW :: 8
+CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENTS_IN_A_ROW
 MOVE_SNAKE_EVERY_N_SECONDS :: .35
 PURPLE :: rl.Color{255, 0, 255, 200}
 DEATH_ANIMATION_TIME_IN_SECONDS :: f32(1.2)
@@ -72,8 +72,8 @@ Game_Memory :: struct {
 
 Game_Sounds :: struct {
 	death: rl.Sound,
-	eat: rl.Sound,
-	pop: rl.Sound,
+	eat:   rl.Sound,
+	pop:   rl.Sound,
 }
 // VARIABLES & POINTERS
 G_MEM: ^Game_Memory
@@ -116,15 +116,15 @@ game_init :: proc() {
 	GAME_SOUNDS = new(Game_Sounds)
 
 	CAT_TEXTURES^ = Cat_Textures {
-		left      = rl.LoadTexture("assets/kot_left.png"),
-		right     = rl.LoadTexture("assets/kot_right.png"),
-		up        = rl.LoadTexture("assets/kot_back.png"),
-		down      = rl.LoadTexture("assets/kot_front.png"),
-		left_pop  = rl.LoadTexture("assets/kot_left_open.png"),
-		right_pop = rl.LoadTexture("assets/kot_right_open.png"),
-		up_pop    = rl.LoadTexture("assets/kot_back_open.png"),
-		down_pop  = rl.LoadTexture("assets/kot_front_open.png"),
-		dead      = rl.LoadTexture("assets/kot_ded.png"),
+		left      = rl.LoadTexture("assets/textures/cat/kot_left.png"),
+		right     = rl.LoadTexture("assets/textures/cat/kot_right.png"),
+		up        = rl.LoadTexture("assets/textures/cat/kot_back.png"),
+		down      = rl.LoadTexture("assets/textures/cat/kot_front.png"),
+		left_pop  = rl.LoadTexture("assets/textures/cat/kot_left_open.png"),
+		right_pop = rl.LoadTexture("assets/textures/cat/kot_right_open.png"),
+		up_pop    = rl.LoadTexture("assets/textures/cat/kot_back_open.png"),
+		down_pop  = rl.LoadTexture("assets/textures/cat/kot_front_open.png"),
+		dead      = rl.LoadTexture("assets/textures/cat/kot_ded.png"),
 	}
 
 	CAT_TEXTURES_INDEXABLE^ = [9]^rl.Texture {
@@ -140,14 +140,14 @@ game_init :: proc() {
 	}
 
 	STAR_TEXTURES^ = Star_Textures {
-		star1 = rl.LoadTexture("assets/star_01.png"),
-		star2 = rl.LoadTexture("assets/star_02.png"),
+		star1 = rl.LoadTexture("assets/textures/star/star_01.png"),
+		star2 = rl.LoadTexture("assets/textures/star/star_02.png"),
 	}
 
 	GAME_SOUNDS^ = Game_Sounds {
-		death = rl.LoadSound("assets/death.ogg"),
-		eat = rl.LoadSound("assets/hap.ogg"),
-		pop = rl.LoadSound("assets/pop.ogg"),
+		death = rl.LoadSound("assets/audio/death.ogg"),
+		eat   = rl.LoadSound("assets/audio/hap.ogg"),
+		pop   = rl.LoadSound("assets/audio/pop.ogg"),
 	}
 
 	set_memory_to_initial_state()
@@ -175,6 +175,7 @@ set_memory_to_initial_state :: proc() {
 		game_state              = .GAMEPLAY if G_MEM.game_state == .SCORE_SCREEN || G_MEM.game_state == .VICTORY_SCREEN else .START_SCREEN,
 		pending_cat_direction   = Cat_Direction.RIGHT,
 		star_textures_index     = 1,
+		star_pos                = get_new_random_star_pos(),
 	}
 }
 
@@ -268,7 +269,7 @@ update :: proc() {
 		G_MEM.cat_tail_index += 1
 		rl.PlaySound(GAME_SOUNDS.eat)
 		if G_MEM.cat_tail_index ==
-		   NUMBER_OF_GRID_ELEMENT_IN_A_ROW * NUMBER_OF_GRID_ELEMENT_IN_A_ROW - 1 {
+		   NUMBER_OF_GRID_ELEMENTS_IN_A_ROW * NUMBER_OF_GRID_ELEMENTS_IN_A_ROW - 1 {
 			G_MEM.cat_head.texture_index = 7
 			for i in 0 ..< G_MEM.cat_tail_index {
 				G_MEM.cat_segments[i].texture_index = 3
@@ -378,10 +379,11 @@ draw_cat_head :: proc() {
 draw_cat_body :: proc() {
 	if G_MEM.cat_tail_index == 0 {return}
 	if G_MEM.game_state != .DYING_ANIMATION {
-		G_MEM.cat_segments[G_MEM.cat_tail_index - 1].texture_index = G_MEM.cat_head.texture_index % 4
+		G_MEM.cat_segments[G_MEM.cat_tail_index - 1].texture_index =
+			G_MEM.cat_head.texture_index % 4
 	}
 
-	for i in 0 ..< G_MEM.cat_tail_index   {
+	for i in 0 ..< G_MEM.cat_tail_index {
 		cat_segment := G_MEM.cat_segments[i]
 		rl.DrawTextureEx(
 			CAT_TEXTURES_INDEXABLE[cat_segment.texture_index]^,
@@ -459,8 +461,8 @@ draw_fps :: proc() {
 // naive solution of not spawning stars in the snake, is there a better way?
 get_new_random_star_pos :: proc() -> V2i8 {
 	new_pos := V2i8 {
-		i8(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENT_IN_A_ROW - 1)),
-		i8(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENT_IN_A_ROW - 1)),
+		i8(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENTS_IN_A_ROW - 1)),
+		i8(rl.GetRandomValue(0, NUMBER_OF_GRID_ELEMENTS_IN_A_ROW - 1)),
 	}
 	if new_pos.x == G_MEM.cat_head.pos.x && new_pos.y == G_MEM.cat_head.pos.y {
 		return get_new_random_star_pos()
@@ -499,9 +501,9 @@ is_cat_head_inside_cat_body :: proc() -> bool {
 is_cat_outside_canvas :: proc() -> bool {
 	return(
 		G_MEM.cat_head.pos.x < 0 ||
-		G_MEM.cat_head.pos.x >= NUMBER_OF_GRID_ELEMENT_IN_A_ROW ||
+		G_MEM.cat_head.pos.x >= NUMBER_OF_GRID_ELEMENTS_IN_A_ROW ||
 		G_MEM.cat_head.pos.y < 0 ||
-		G_MEM.cat_head.pos.y >= NUMBER_OF_GRID_ELEMENT_IN_A_ROW \
+		G_MEM.cat_head.pos.y >= NUMBER_OF_GRID_ELEMENTS_IN_A_ROW \
 	)
 }
 

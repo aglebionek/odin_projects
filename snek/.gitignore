@@ -4,3 +4,4 @@ game_hot_reload.exe
 game_hot_reload.bin
 raylib.dll
 linux/**
+*/.res
