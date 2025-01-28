@@ -4,11 +4,9 @@
 
 // TODOs and issues
 // Victory animation is scuffed, rework it later
-// Fix dying animation, the cat directly behind the head doesn't die
-// Fix victory screen
+// Fix victory screen (change texts)
 // Make a difficulty selection screen at the start to train ui coding
 // Make the texts match the grid size
-// Add sound effects
 // Set the .exe icon
 
 package game
@@ -73,8 +71,9 @@ Game_Memory :: struct {
 }
 
 Game_Sounds :: struct {
-	pop: rl.Sound,
+	death: rl.Sound,
 	eat: rl.Sound,
+	pop: rl.Sound,
 }
 // VARIABLES & POINTERS
 G_MEM: ^Game_Memory
@@ -146,8 +145,9 @@ game_init :: proc() {
 	}
 
 	GAME_SOUNDS^ = Game_Sounds {
-		pop = rl.LoadSound("assets/pop.ogg"),
+		death = rl.LoadSound("assets/death.ogg"),
 		eat = rl.LoadSound("assets/hap.ogg"),
+		pop = rl.LoadSound("assets/pop.ogg"),
 	}
 
 	set_memory_to_initial_state()
@@ -254,6 +254,7 @@ update :: proc() {
 
 	if is_cat_outside_canvas() {
 		move_cat_body()
+		rl.PlaySound(GAME_SOUNDS.death)
 		G_MEM.game_state = .DYING_ANIMATION
 		G_MEM.time_since_last_move += DEATH_ANIMATION_TIME_IN_SECONDS
 		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
@@ -281,6 +282,7 @@ update :: proc() {
 	}
 
 	if is_cat_head_inside_cat_body() {
+		rl.PlaySound(GAME_SOUNDS.death)
 		G_MEM.game_state = .DYING_ANIMATION
 		G_MEM.time_since_last_move += DEATH_ANIMATION_TIME_IN_SECONDS
 		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
@@ -337,6 +339,7 @@ play_dead_animation :: proc() {
 	G_MEM.cat_head.texture_index = 8
 	G_MEM.currently_dying_segment -= 1
 	G_MEM.time_since_last_move = 0
+	rl.PlaySound(GAME_SOUNDS.death)
 }
 
 play_victory_animation :: proc() {
@@ -374,7 +377,9 @@ draw_cat_head :: proc() {
 
 draw_cat_body :: proc() {
 	if G_MEM.cat_tail_index == 0 {return}
-	G_MEM.cat_segments[G_MEM.cat_tail_index - 1].texture_index = G_MEM.cat_head.texture_index % 4
+	if G_MEM.game_state != .DYING_ANIMATION {
+		G_MEM.cat_segments[G_MEM.cat_tail_index - 1].texture_index = G_MEM.cat_head.texture_index % 4
+	}
 
 	for i in 0 ..< G_MEM.cat_tail_index   {
 		cat_segment := G_MEM.cat_segments[i]
