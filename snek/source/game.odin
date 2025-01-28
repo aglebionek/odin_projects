@@ -16,9 +16,9 @@ import rl "vendor:raylib"
 
 // --- GLOBAL ---
 // CONSTANTS
-GRID_ELEMENT_SIZE :: 16
-NUMBER_OF_GRID_ELEMENTS_IN_A_ROW :: 8
-CANVAS_SIZE :: GRID_ELEMENT_SIZE * NUMBER_OF_GRID_ELEMENTS_IN_A_ROW
+GRID_ELEMENT_PIXELS :: 16
+NUMBER_OF_GRID_ELEMENTS_IN_A_ROW :: 2
+CANVAS_SIZE :: GRID_ELEMENT_PIXELS * NUMBER_OF_GRID_ELEMENTS_IN_A_ROW
 MOVE_SNAKE_EVERY_N_SECONDS :: .35
 PURPLE :: rl.Color{255, 0, 255, 200}
 DEATH_ANIMATION_TIME_IN_SECONDS :: f32(1.2)
@@ -87,7 +87,7 @@ game_camera :: proc() -> rl.Camera2D {
 
 	lower_dim := h if h < w else w
 	zoom := lower_dim / CANVAS_SIZE
-	zoom -= zoom / GRID_ELEMENT_SIZE * 3
+	zoom -= zoom / GRID_ELEMENT_PIXELS * 3
 
 	offset_left := (w - CANVAS_SIZE * zoom) / 2
 	offset_top := (h - CANVAS_SIZE * zoom) / 2
@@ -377,13 +377,13 @@ draw_cat_head :: proc() {
 }
 
 draw_cat_body :: proc() {
-	if G_MEM.cat_tail_index == 0 {return}
-	if G_MEM.game_state != .DYING_ANIMATION {
-		G_MEM.cat_segments[G_MEM.cat_tail_index - 1].texture_index =
-			G_MEM.cat_head.texture_index % 4
+	cat_tail_index := G_MEM.cat_tail_index
+	if cat_tail_index == 0 {return}
+	if G_MEM.game_state == .GAMEPLAY {
+		G_MEM.cat_segments[cat_tail_index - 1].texture_index = G_MEM.cat_head.texture_index % 4
 	}
 
-	for i in 0 ..< G_MEM.cat_tail_index {
+	for i in 0 ..< cat_tail_index {
 		cat_segment := G_MEM.cat_segments[i]
 		rl.DrawTextureEx(
 			CAT_TEXTURES_INDEXABLE[cat_segment.texture_index]^,
@@ -477,8 +477,8 @@ get_new_random_star_pos :: proc() -> V2i8 {
 
 grid_to_world :: proc(grid_pos: V2i8) -> rl.Vector2 {
 	return rl.Vector2 {
-		f32(int(grid_pos[0]) * GRID_ELEMENT_SIZE),
-		f32(int(grid_pos[1]) * GRID_ELEMENT_SIZE),
+		f32(int(grid_pos[0]) * GRID_ELEMENT_PIXELS),
+		f32(int(grid_pos[1]) * GRID_ELEMENT_PIXELS),
 	}
 }
 
