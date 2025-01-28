@@ -7,6 +7,7 @@
 // Make a difficulty selection screen at the start to train ui coding/use an external ui raylib library
 // Make the texts centered/match the grid size/change camera zoom for ui states
 // Set the .exe icon
+// Export images as code https://www.reddit.com/r/raylib/comments/ub09iq/how_to_bundle_assets_with_compiled_executable/
 
 package game
 
@@ -99,7 +100,7 @@ game_camera :: proc() -> rl.Camera2D {
 // --- CORE EDITABLE PROCEDURES ---
 @(export)
 game_init_window :: proc() {
-	icon: rl.Image = rl.LoadImage("assets/kot_front.png")
+	icon: rl.Image = rl.LoadImage("assets/textures/cat/kot_front.png")
 	rl.SetConfigFlags({.WINDOW_RESIZABLE})
 	rl.InitWindow(800, 600, "Snek")
 	rl.SetWindowIcon(icon)
