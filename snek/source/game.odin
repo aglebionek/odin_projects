@@ -3,10 +3,9 @@
 // a better way of generating random star positions? (get_new_random_star_pos) For example, using a list of all non-occupied positions? Or map each coordinate to unique index, so we can just pick a random index from the available ones?
 
 // TODOs and issues
-// Victory animation is scuffed, rework it later
-// Fix victory screen (change texts)
+// Think of a better name for "currently dying index", something like 'segments_index_helper' or 'animation index helper'
 // Make a difficulty selection screen at the start to train ui coding/use an external ui raylib library
-// Make the texts match the grid size
+// Make the texts centered/match the grid size/change camera zoom for ui states
 // Set the .exe icon
 
 package game
@@ -17,11 +16,13 @@ import rl "vendor:raylib"
 // --- GLOBAL ---
 // CONSTANTS
 GRID_ELEMENT_PIXELS :: 16
-NUMBER_OF_GRID_ELEMENTS_IN_A_ROW :: 2
+NUMBER_OF_GRID_ELEMENTS_IN_A_ROW :: 4
 CANVAS_SIZE :: GRID_ELEMENT_PIXELS * NUMBER_OF_GRID_ELEMENTS_IN_A_ROW
-MOVE_SNAKE_EVERY_N_SECONDS :: .35
-PURPLE :: rl.Color{255, 0, 255, 200}
 DEATH_ANIMATION_TIME_IN_SECONDS :: f32(1.2)
+MOVE_SNAKE_EVERY_N_SECONDS :: f32(0.35)
+VICTORY_ANIMATION_TOTAL_TIME_IN_SECONDS :: f32(5)
+VICTORY_ANIMATION_INTERVAL_IN_SECONDS :: f32(0.25)
+PURPLE :: rl.Color{255, 0, 255, 200}
 // TYPES
 V2i8 :: [2]i8 // Vector2 integer, for grid positions
 Cat_Direction :: enum u8 {
@@ -44,15 +45,15 @@ Cat_Segment :: struct {
 	texture_index: u8,
 }
 Cat_Textures :: struct {
-	left:      rl.Texture,
-	right:     rl.Texture,
-	up:        rl.Texture,
-	down:      rl.Texture,
-	left_pop:  rl.Texture,
-	right_pop: rl.Texture,
-	up_pop:    rl.Texture,
-	down_pop:  rl.Texture,
-	dead:      rl.Texture,
+	left:      rl.Texture, // 0
+	right:     rl.Texture, // 1
+	up:        rl.Texture, // 2
+	down:      rl.Texture, // 3
+	left_pop:  rl.Texture, // 4
+	right_pop: rl.Texture, // 5
+	up_pop:    rl.Texture, // 6
+	down_pop:  rl.Texture, // 7
+	dead:      rl.Texture, // 8
 }
 Star_Textures :: struct {
 	star1: rl.Texture,
@@ -155,7 +156,7 @@ game_init :: proc() {
 	game_hot_reloaded(G_MEM)
 
 	fmt.printfln("Game memory size: %d", game_memory_size())
-	fmt.printfln("Textures size: %d", game_textures_size())
+	fmt.printfln("Assets size: %d", game_assets_size())
 }
 
 @(export)
@@ -195,7 +196,11 @@ draw :: proc() {
 	}
 
 	if G_MEM.game_state == .SCORE_SCREEN || G_MEM.game_state == .VICTORY_SCREEN {
-		rl.DrawText("Game Over", 10, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
+		if G_MEM.game_state == .VICTORY_SCREEN {
+			rl.DrawText("You won!", 5, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
+		} else {
+			rl.DrawText("Game over", 10, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
+		}
 		rl.DrawText(
 			fmt.ctprintf("Score: %d", G_MEM.cat_tail_index),
 			40,
@@ -268,13 +273,11 @@ update :: proc() {
 	if is_cat_pos_exactly_at_star_pos() {
 		G_MEM.cat_tail_index += 1
 		rl.PlaySound(GAME_SOUNDS.eat)
-		if G_MEM.cat_tail_index ==
-		   NUMBER_OF_GRID_ELEMENTS_IN_A_ROW * NUMBER_OF_GRID_ELEMENTS_IN_A_ROW - 1 {
+		if is_snake_taking_up_the_entire_board() {
 			G_MEM.cat_head.texture_index = 7
-			for i in 0 ..< G_MEM.cat_tail_index {
-				G_MEM.cat_segments[i].texture_index = 3
-			}
+			face_all_the_cats_down()
 			G_MEM.game_state = .VICTORY_ANIMATION
+			G_MEM.currently_dying_segment = 1 // here this will be a counter for the number of cycles the victory animation went through
 			return
 		}
 		spawn_new_star()
@@ -307,7 +310,10 @@ should_update_death_animation :: proc() -> bool {
 }
 
 should_update_victory_animation :: proc() -> bool {
-	return G_MEM.time_since_last_move >= .1
+	return(
+		G_MEM.time_since_last_move >=
+		VICTORY_ANIMATION_INTERVAL_IN_SECONDS + random_step_offset_in_secs() \
+	)
 }
 
 move_cat_head :: proc() {
@@ -346,18 +352,23 @@ play_dead_animation :: proc() {
 play_victory_animation :: proc() {
 	if !should_update_victory_animation() {return}
 
-	cat_segments_len: i32 = len(G_MEM.cat_segments) - 1
-	if G_MEM.currently_dying_segment == cat_segments_len {
+	if VICTORY_ANIMATION_INTERVAL_IN_SECONDS * f32(G_MEM.currently_dying_segment) >=
+	   VICTORY_ANIMATION_TOTAL_TIME_IN_SECONDS {
 		G_MEM.game_state = .VICTORY_SCREEN
 		return
 	}
-	random_index := rl.GetRandomValue(0, cat_segments_len)
-	if G_MEM.currently_dying_segment != 0 {
-		for G_MEM.cat_segments[random_index].texture_index == 7 {
-			random_index = rl.GetRandomValue(0, cat_segments_len)
+
+	closed_or_poped_texture: u8 = 7 if rl.GetRandomValue(0, 1) == 1 else 3
+	for _ in 0 ..< G_MEM.currently_dying_segment {
+		random_cat_segment_index := rl.GetRandomValue(0, G_MEM.cat_tail_index - 1)
+		G_MEM.cat_segments[random_cat_segment_index].texture_index = closed_or_poped_texture
+		closed_or_poped_texture = 7 if closed_or_poped_texture == 3 else 3
+		if closed_or_poped_texture == 7 {
+			rl.PlaySound(GAME_SOUNDS.pop)
 		}
 	}
-	G_MEM.cat_segments[random_index].texture_index = 7
+	G_MEM.cat_head.texture_index = closed_or_poped_texture
+
 	G_MEM.currently_dying_segment += 1
 	G_MEM.time_since_last_move = 0
 }
@@ -396,7 +407,14 @@ draw_cat_body :: proc() {
 }
 
 draw_star :: proc() {
+	if G_MEM.game_state == .VICTORY_ANIMATION {return}
 	rl.DrawTextureEx(determine_star_texture()^, grid_to_world(G_MEM.star_pos), 0, .9, rl.WHITE)
+}
+
+face_all_the_cats_down :: proc() {
+	for i in 0 ..< G_MEM.cat_tail_index {
+		G_MEM.cat_segments[i].texture_index = 3
+	}
 }
 
 // -- BEGIN: cat direction
@@ -415,6 +433,13 @@ set_direction_to_turn_on_next_step :: proc() {
 	if !is_new_direction_oposite_to_current(new_cat_direction) {
 		G_MEM.pending_cat_direction = new_cat_direction
 	}
+}
+
+is_snake_taking_up_the_entire_board :: proc() -> bool {
+	return(
+		G_MEM.cat_tail_index ==
+		NUMBER_OF_GRID_ELEMENTS_IN_A_ROW * NUMBER_OF_GRID_ELEMENTS_IN_A_ROW - 1 \
+	)
 }
 
 is_new_direction_oposite_to_current :: proc(new_direction: Cat_Direction) -> bool {
@@ -436,6 +461,11 @@ determine_cat_texture :: proc() {
 	cat_texture_index := u8(G_MEM.cat_head.direction) + u8(4) * u8(is_cat_head_next_to_star())
 	G_MEM.cat_head.texture_index = cat_texture_index
 	G_MEM.cat_segments[G_MEM.cat_tail_index] = G_MEM.cat_head
+}
+
+// returns -0.1 or 0.1
+random_step_offset_in_secs :: proc() -> f32 {
+	return -0.1 if rl.GetRandomValue(0, 1) == 0 else 0.1
 }
 
 // star
@@ -551,9 +581,8 @@ game_memory :: proc() -> rawptr {
 game_memory_size :: proc() -> int {
 	return size_of(Game_Memory)
 }
-
-game_textures_size :: proc() -> int {
-	return size_of(Cat_Textures) + size_of(Star_Textures)
+game_assets_size :: proc() -> int {
+	return size_of(Cat_Textures) + size_of(Star_Textures) + size_of(Game_Sounds) + size_of([9]^rl.Texture) 
 }
 
 @(export)
