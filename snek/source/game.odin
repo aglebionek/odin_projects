@@ -5,12 +5,15 @@
 // TODOs and issues
 // Think of a better name for "currently dying index", something like 'segments_index_helper' or 'animation index helper'
 // Make a difficulty selection screen at the start to train ui coding/use an external ui raylib library
+// Remove score from victory screen
 // Make the texts centered/match the grid size/change camera zoom for ui states
 // Set the .exe icon
 // Export images as code https://www.reddit.com/r/raylib/comments/ub09iq/how_to_bundle_assets_with_compiled_executable/
+// Try making a webbuild
 
 package game
 
+// import "core:c/libc"
 import "core:fmt"
 import rl "vendor:raylib"
 
@@ -170,15 +173,20 @@ game_shutdown :: proc() {
 }
 
 set_memory_to_initial_state :: proc() {
+	game_state := G_MEM.game_state
 	G_MEM^ = Game_Memory {
 		cat_head                = Cat_Segment{V2i8{0, 0}, Cat_Direction.RIGHT, 1},
+		cat_segments			= [CANVAS_SIZE]Cat_Segment{},
 		cat_tail_index          = 0,
 		currently_dying_segment = 0,
-		game_state              = .GAMEPLAY if G_MEM.game_state == .SCORE_SCREEN || G_MEM.game_state == .VICTORY_SCREEN else .START_SCREEN,
+		game_state              = .GAMEPLAY if game_state == .SCORE_SCREEN || game_state == .VICTORY_SCREEN else .START_SCREEN,
 		pending_cat_direction   = Cat_Direction.RIGHT,
 		star_textures_index     = 1,
-		star_pos                = get_new_random_star_pos(),
+		time_since_last_move    = 0,
 	}
+	new_star_pos := get_new_random_star_pos()
+	G_MEM^.star_pos = new_star_pos
+	determine_cat_texture()
 }
 
 draw :: proc() {
@@ -553,7 +561,7 @@ is_cat_head_next_to_star :: proc() -> bool {
 		result = x_diff == 1
 	}
 
-	if result {
+	if result && G_MEM.game_state == .GAMEPLAY {
 		rl.PlaySound(GAME_SOUNDS.pop)
 	}
 
@@ -583,7 +591,12 @@ game_memory_size :: proc() -> int {
 	return size_of(Game_Memory)
 }
 game_assets_size :: proc() -> int {
-	return size_of(Cat_Textures) + size_of(Star_Textures) + size_of(Game_Sounds) + size_of([9]^rl.Texture) 
+	return(
+		size_of(Cat_Textures) +
+		size_of(Star_Textures) +
+		size_of(Game_Sounds) +
+		size_of([9]^rl.Texture) \
+	)
 }
 
 @(export)
