@@ -1,19 +1,16 @@
 // Code ideas:
 // change G_MEM.cat_segments from AOS to SOA? Cat_Segment {pos_x: [1]f32, pos_y: [1]f32, direction: [1]Cat_Direction}
 // a better way of generating random star positions? (get_new_random_star_pos) For example, using a list of all non-occupied positions? Or map each coordinate to unique index, so we can just pick a random index from the available ones?
+// make a UI struct to calculate the text/camera offsets and zooms only once, run the size updates in the update function using rl.IsWindowResized(). Possibly make something like Text struct that would hold the font size, offsets, rects, etc.
 
 // TODOs and issues
-// Think of a better name for "currently dying index", something like 'segments_index_helper' or 'animation index helper'
 // Make a difficulty selection screen at the start to train ui coding/use an external ui raylib library
-// Remove score from victory screen
-// Make the texts centered/match the grid size/change camera zoom for ui states
 // Set the .exe icon
 // Export images as code https://www.reddit.com/r/raylib/comments/ub09iq/how_to_bundle_assets_with_compiled_executable/
 // Try making a webbuild
 
 package game
 
-// import "core:c/libc"
 import "core:fmt"
 import rl "vendor:raylib"
 
@@ -23,10 +20,11 @@ GRID_ELEMENT_PIXELS :: 16
 NUMBER_OF_GRID_ELEMENTS_IN_A_ROW :: 4
 CANVAS_SIZE :: GRID_ELEMENT_PIXELS * NUMBER_OF_GRID_ELEMENTS_IN_A_ROW
 DEATH_ANIMATION_TIME_IN_SECONDS :: f32(1.2)
-MOVE_SNAKE_EVERY_N_SECONDS :: f32(0.35)
+MOVE_SNAKE_EVERY_N_SECONDS :: f32(0.25)
 VICTORY_ANIMATION_TOTAL_TIME_IN_SECONDS :: f32(5)
 VICTORY_ANIMATION_INTERVAL_IN_SECONDS :: f32(0.25)
 PURPLE :: rl.Color{255, 0, 255, 200}
+UI_SCALING_FACTOR: i32 = 1
 // TYPES
 V2i8 :: [2]i8 // Vector2 integer, for grid positions
 Cat_Direction :: enum u8 {
@@ -64,15 +62,15 @@ Star_Textures :: struct {
 	star2: rl.Texture,
 }
 Game_Memory :: struct {
-	cat_segments:            [CANVAS_SIZE]Cat_Segment, // the last element is the tail
-	cat_head:                Cat_Segment,
-	time_since_last_move:    f32,
-	currently_dying_segment: i32,
-	cat_tail_index:          i32,
-	star_pos:                V2i8,
-	star_textures_index:     i8,
-	game_state:              Game_States,
-	pending_cat_direction:   Cat_Direction,
+	cat_segments:                   [CANVAS_SIZE]Cat_Segment, // the last element is the tail
+	cat_head:                       Cat_Segment,
+	time_since_last_move:           f32,
+	animation_helper_segment_index: i32,
+	cat_tail_index:                 i32,
+	star_pos:                       V2i8,
+	star_textures_index:            i8,
+	game_state:                     Game_States,
+	pending_cat_direction:          Cat_Direction,
 }
 
 Game_Sounds :: struct {
@@ -87,17 +85,25 @@ CAT_TEXTURES_INDEXABLE: ^[9]^rl.Texture
 STAR_TEXTURES: ^Star_Textures
 GAME_SOUNDS: ^Game_Sounds
 game_camera :: proc() -> rl.Camera2D {
-	w := f32(rl.GetScreenWidth())
-	h := f32(rl.GetScreenHeight())
+	screen_width := f32(rl.GetScreenWidth())
+	screen_height := f32(rl.GetScreenHeight())
 
-	lower_dim := h if h < w else w
-	zoom := lower_dim / CANVAS_SIZE
-	zoom -= zoom / GRID_ELEMENT_PIXELS * 3
+	offset_left := f32(screen_width / 2)
+	offset_right := f32(screen_height / 2)
 
-	offset_left := (w - CANVAS_SIZE * zoom) / 2
-	offset_top := (h - CANVAS_SIZE * zoom) / 2
+	zoom: f32 = f32(screen_width) / 308
 
-	return {target = rl.Vector2{0, 0}, offset = rl.Vector2{offset_left, offset_top}, zoom = zoom}
+	// center the game board
+	if G_MEM.game_state == .GAMEPLAY ||
+	   G_MEM.game_state == .DYING_ANIMATION ||
+	   G_MEM.game_state == .VICTORY_ANIMATION {
+		zoom += 3
+		offset := CANVAS_SIZE * zoom
+		offset_left = (screen_width - offset) / 2
+		offset_right = (screen_height - offset) / 2
+	}
+
+	return {target = rl.Vector2{0, 0}, offset = rl.Vector2{offset_left, offset_right}, zoom = zoom}
 }
 
 // --- CORE EDITABLE PROCEDURES ---
@@ -110,6 +116,7 @@ game_init_window :: proc() {
 	rl.MaximizeWindow()
 	rl.SetTargetFPS(30)
 	rl.InitAudioDevice()
+	UI_SCALING_FACTOR = rl.GetMonitorWidth(0) / 15
 }
 
 @(export)
@@ -175,14 +182,14 @@ game_shutdown :: proc() {
 set_memory_to_initial_state :: proc() {
 	game_state := G_MEM.game_state
 	G_MEM^ = Game_Memory {
-		cat_head                = Cat_Segment{V2i8{0, 0}, Cat_Direction.RIGHT, 1},
-		cat_segments			= [CANVAS_SIZE]Cat_Segment{},
-		cat_tail_index          = 0,
-		currently_dying_segment = 0,
-		game_state              = .GAMEPLAY if game_state == .SCORE_SCREEN || game_state == .VICTORY_SCREEN else .START_SCREEN,
-		pending_cat_direction   = Cat_Direction.RIGHT,
-		star_textures_index     = 1,
-		time_since_last_move    = 0,
+		cat_head                       = Cat_Segment{V2i8{0, 0}, Cat_Direction.RIGHT, 1},
+		cat_segments                   = [CANVAS_SIZE]Cat_Segment{},
+		cat_tail_index                 = 0,
+		animation_helper_segment_index = 0,
+		game_state                     = .GAMEPLAY if game_state == .SCORE_SCREEN || game_state == .VICTORY_SCREEN else .START_SCREEN,
+		pending_cat_direction          = Cat_Direction.RIGHT,
+		star_textures_index            = 1,
+		time_since_last_move           = 0,
 	}
 	new_star_pos := get_new_random_star_pos()
 	G_MEM^.star_pos = new_star_pos
@@ -198,26 +205,43 @@ draw :: proc() {
 	rl.BeginMode2D(camera)
 
 	if G_MEM.game_state == .START_SCREEN {
-		rl.DrawText("Press Enter to start", 10, CANVAS_SIZE / 2, 10, rl.WHITE)
+		rl.DrawText(
+			"Press Enter to start",
+			-rl.MeasureText("Press Enter to start", 20) / 2,
+			0,
+			20,
+			rl.WHITE,
+		)
 		rl.EndMode2D()
 		rl.EndDrawing()
 		return
 	}
 
-	if G_MEM.game_state == .SCORE_SCREEN || G_MEM.game_state == .VICTORY_SCREEN {
-		if G_MEM.game_state == .VICTORY_SCREEN {
-			rl.DrawText("You won!", 5, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
-		} else {
-			rl.DrawText("Game over", 10, CANVAS_SIZE / 2 - 20, 20, rl.WHITE)
-		}
+	if G_MEM.game_state == .SCORE_SCREEN {
+		rl.DrawText("Game over", -rl.MeasureText("Game over", 30) / 2, -30, 30, rl.WHITE)
+		score_string := fmt.ctprintf("Score: %d", G_MEM.cat_tail_index)
+		rl.DrawText(score_string, -rl.MeasureText(score_string, 20) / 2, 0, 20, rl.WHITE)
 		rl.DrawText(
-			fmt.ctprintf("Score: %d", G_MEM.cat_tail_index),
-			40,
-			CANVAS_SIZE / 2,
-			10,
+			"Press Enter to restart",
+			-rl.MeasureText("Press Enter to restart", 20) / 2,
+			20,
+			20,
 			rl.WHITE,
 		)
-		rl.DrawText("Press Enter to restart", 0, CANVAS_SIZE / 2 + 20, 10, rl.WHITE)
+		rl.EndMode2D()
+		rl.EndDrawing()
+		return
+	}
+
+	if G_MEM.game_state == .VICTORY_SCREEN {
+		rl.DrawText("You won!", -rl.MeasureText("You won!", 30) / 2, -30, 30, rl.WHITE)
+		rl.DrawText(
+			"Press Enter to restart",
+			-rl.MeasureText("Press Enter to restart", 20) / 2,
+			0,
+			20,
+			rl.WHITE,
+		)
 		rl.EndMode2D()
 		rl.EndDrawing()
 		return
@@ -243,6 +267,7 @@ draw :: proc() {
 
 update :: proc() {
 	G_MEM.time_since_last_move += rl.GetFrameTime()
+	// if rl.IsWindowResized() {change_font_size()}
 	if G_MEM.game_state == .DYING_ANIMATION || G_MEM.game_state == .VICTORY_ANIMATION {return}
 	if G_MEM.game_state == .START_SCREEN {
 		if rl.IsKeyPressed(.ENTER) {
@@ -272,7 +297,7 @@ update :: proc() {
 		rl.PlaySound(GAME_SOUNDS.death)
 		G_MEM.game_state = .DYING_ANIMATION
 		G_MEM.time_since_last_move += DEATH_ANIMATION_TIME_IN_SECONDS
-		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
+		G_MEM.animation_helper_segment_index = G_MEM.cat_tail_index
 		return
 	}
 
@@ -286,7 +311,7 @@ update :: proc() {
 			G_MEM.cat_head.texture_index = 7
 			face_all_the_cats_down()
 			G_MEM.game_state = .VICTORY_ANIMATION
-			G_MEM.currently_dying_segment = 1 // here this will be a counter for the number of cycles the victory animation went through
+			G_MEM.animation_helper_segment_index = 1 // here this will be a counter for the number of cycles the victory animation went through
 			return
 		}
 		spawn_new_star()
@@ -298,7 +323,7 @@ update :: proc() {
 		rl.PlaySound(GAME_SOUNDS.death)
 		G_MEM.game_state = .DYING_ANIMATION
 		G_MEM.time_since_last_move += DEATH_ANIMATION_TIME_IN_SECONDS
-		G_MEM.currently_dying_segment = G_MEM.cat_tail_index
+		G_MEM.animation_helper_segment_index = G_MEM.cat_tail_index
 		return
 	}
 
@@ -346,14 +371,14 @@ move_cat_body :: proc() {
 
 play_dead_animation :: proc() {
 	if !should_update_death_animation() {return}
-	if G_MEM.currently_dying_segment == -1 {
+	if G_MEM.animation_helper_segment_index == -1 {
 		G_MEM.game_state = .SCORE_SCREEN
 		return
 	}
 
-	G_MEM.cat_segments[G_MEM.currently_dying_segment].texture_index = 8
+	G_MEM.cat_segments[G_MEM.animation_helper_segment_index].texture_index = 8
 	G_MEM.cat_head.texture_index = 8
-	G_MEM.currently_dying_segment -= 1
+	G_MEM.animation_helper_segment_index -= 1
 	G_MEM.time_since_last_move = 0
 	rl.PlaySound(GAME_SOUNDS.death)
 }
@@ -361,14 +386,14 @@ play_dead_animation :: proc() {
 play_victory_animation :: proc() {
 	if !should_update_victory_animation() {return}
 
-	if VICTORY_ANIMATION_INTERVAL_IN_SECONDS * f32(G_MEM.currently_dying_segment) >=
+	if VICTORY_ANIMATION_INTERVAL_IN_SECONDS * f32(G_MEM.animation_helper_segment_index) >=
 	   VICTORY_ANIMATION_TOTAL_TIME_IN_SECONDS {
 		G_MEM.game_state = .VICTORY_SCREEN
 		return
 	}
 
 	closed_or_poped_texture: u8 = 7 if rl.GetRandomValue(0, 1) == 1 else 3
-	for _ in 0 ..< G_MEM.currently_dying_segment {
+	for _ in 0 ..< G_MEM.animation_helper_segment_index {
 		random_cat_segment_index := rl.GetRandomValue(0, G_MEM.cat_tail_index - 1)
 		G_MEM.cat_segments[random_cat_segment_index].texture_index = closed_or_poped_texture
 		closed_or_poped_texture = 7 if closed_or_poped_texture == 3 else 3
@@ -378,7 +403,7 @@ play_victory_animation :: proc() {
 	}
 	G_MEM.cat_head.texture_index = closed_or_poped_texture
 
-	G_MEM.currently_dying_segment += 1
+	G_MEM.animation_helper_segment_index += 1
 	G_MEM.time_since_last_move = 0
 }
 
