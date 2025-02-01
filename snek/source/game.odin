@@ -15,6 +15,9 @@ import "core:fmt"
 import rl "vendor:raylib"
 
 // --- GLOBAL ---
+// DEBUG, COMMENT OUT IN RELEASE, would be nice to move it to main_hot_reload.odin
+import "core:c/libc" // This is to bind the hot reload script to a key.
+HOT_RELOAD_KEY :: rl.KeyboardKey.R // REMEMBER TO PRESS F5/F6 AFTER HOT RELOADING
 // CONSTANTS
 GRID_ELEMENT_PIXELS :: 16
 NUMBER_OF_GRID_ELEMENTS_IN_A_ROW :: 4
@@ -24,7 +27,6 @@ MOVE_SNAKE_EVERY_N_SECONDS :: f32(0.25)
 VICTORY_ANIMATION_TOTAL_TIME_IN_SECONDS :: f32(5)
 VICTORY_ANIMATION_INTERVAL_IN_SECONDS :: f32(0.25)
 PURPLE :: rl.Color{255, 0, 255, 200}
-UI_SCALING_FACTOR: i32 = 1
 // TYPES
 V2i8 :: [2]i8 // Vector2 integer, for grid positions
 Cat_Direction :: enum u8 {
@@ -116,7 +118,6 @@ game_init_window :: proc() {
 	rl.MaximizeWindow()
 	rl.SetTargetFPS(30)
 	rl.InitAudioDevice()
-	UI_SCALING_FACTOR = rl.GetMonitorWidth(0) / 15
 }
 
 @(export)
@@ -234,11 +235,11 @@ draw :: proc() {
 	}
 
 	if G_MEM.game_state == .VICTORY_SCREEN {
-		rl.DrawText("You won!", -rl.MeasureText("You won!", 30) / 2, -30, 30, rl.WHITE)
+		rl.DrawText("You won!", -rl.MeasureText("You won!", 30) / 2, -20, 30, rl.WHITE)
 		rl.DrawText(
 			"Press Enter to restart",
 			-rl.MeasureText("Press Enter to restart", 20) / 2,
-			0,
+			10,
 			20,
 			rl.WHITE,
 		)
@@ -267,7 +268,7 @@ draw :: proc() {
 
 update :: proc() {
 	G_MEM.time_since_last_move += rl.GetFrameTime()
-	// if rl.IsWindowResized() {change_font_size()}
+	if rl.IsKeyPressed(HOT_RELOAD_KEY) {libc.system("build_hot_reload.bat")}
 	if G_MEM.game_state == .DYING_ANIMATION || G_MEM.game_state == .VICTORY_ANIMATION {return}
 	if G_MEM.game_state == .START_SCREEN {
 		if rl.IsKeyPressed(.ENTER) {
