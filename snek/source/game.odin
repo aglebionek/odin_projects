@@ -21,6 +21,7 @@ HOT_RELOAD_KEY :: rl.KeyboardKey.R // REMEMBER TO PRESS F5/F6 AFTER HOT RELOADIN
 // CONSTANTS
 GRID_ELEMENT_PIXELS :: 16
 NUMBER_OF_GRID_ELEMENTS_IN_A_ROW :: 4
+GRID_SIZE :: NUMBER_OF_GRID_ELEMENTS_IN_A_ROW * NUMBER_OF_GRID_ELEMENTS_IN_A_ROW
 CANVAS_SIZE :: GRID_ELEMENT_PIXELS * NUMBER_OF_GRID_ELEMENTS_IN_A_ROW
 DEATH_ANIMATION_TIME_IN_SECONDS :: f32(1.2)
 MOVE_SNAKE_EVERY_N_SECONDS :: f32(0.25)
@@ -64,7 +65,7 @@ Star_Textures :: struct {
 	star2: rl.Texture,
 }
 Game_Memory :: struct {
-	cat_segments:                   [CANVAS_SIZE]Cat_Segment, // the last element is the tail
+	cat_segments:                   [GRID_SIZE]Cat_Segment, // the last element is the tail
 	cat_head:                       Cat_Segment,
 	time_since_last_move:           f32,
 	animation_helper_segment_index: i32,
@@ -184,7 +185,7 @@ set_memory_to_initial_state :: proc() {
 	game_state := G_MEM.game_state
 	G_MEM^ = Game_Memory {
 		cat_head                       = Cat_Segment{V2i8{0, 0}, Cat_Direction.RIGHT, 1},
-		cat_segments                   = [CANVAS_SIZE]Cat_Segment{},
+		cat_segments                   = [GRID_SIZE]Cat_Segment{},
 		cat_tail_index                 = 0,
 		animation_helper_segment_index = 0,
 		game_state                     = .GAMEPLAY if game_state == .SCORE_SCREEN || game_state == .VICTORY_SCREEN else .START_SCREEN,
